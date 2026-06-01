@@ -10,6 +10,7 @@ Chill 项目统一构建脚本
   player          构建 OmniMixPlayer 播放器 (playerbuild/)
   fh6-asset       打包 FH6 桥接 Flutter 资源
   fh6             构建 FH6 桥接原生 mod (release/FH6OmniBridge)
+  check           检查构建环境和本地引用，不执行构建
   all             构建全部 (mod + player + fh6-asset)
 
 选项:
@@ -27,6 +28,9 @@ Chill 项目统一构建脚本
 
   # 构建全部
   python scripts/build_all.py all --full
+
+  # 检查环境
+  python scripts/build_all.py check
 """
 
 import argparse
@@ -227,6 +231,245 @@ def check_exists(path: Path, desc: str = "") -> bool:
         info(f"  WARNING: {desc or path.name} not found: {path}")
         return False
     return True
+
+
+def _run_capture(cmd: list[str], cwd: Path | None = None) -> tuple[int, str]:
+    try:
+        run_cmd = cmd
+        if os.name == "nt":
+            resolved = shutil.which(cmd[0])
+            if resolved and Path(resolved).suffix.lower() in (".bat", ".cmd"):
+                run_cmd = ["cmd.exe", "/d", "/c", "call", resolved, *cmd[1:]]
+        result = subprocess.run(
+            run_cmd,
+            cwd=cwd,
+            shell=False,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError:
+        return 127, ""
+    except Exception as e:
+        return -1, str(e)
+    return result.returncode, result.stdout.strip()
+
+
+def _console_safe(text: str) -> str:
+    encoding = sys.stdout.encoding or "utf-8"
+    return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+
+
+def _check_ok(label: str, detail: str = ""):
+    suffix = f" - {_console_safe(detail)}" if detail else ""
+    print(f"  [OK]   {_console_safe(label)}{suffix}")
+
+
+def _check_warn(label: str, detail: str = ""):
+    suffix = f" - {_console_safe(detail)}" if detail else ""
+    print(f"  [WARN] {_console_safe(label)}{suffix}")
+
+
+def _check_fail(label: str, detail: str = ""):
+    suffix = f" - {_console_safe(detail)}" if detail else ""
+    print(f"  [FAIL] {_console_safe(label)}{suffix}")
+
+
+def _first_output_line(output: str) -> str:
+    return next((line.strip() for line in output.splitlines() if line.strip()), "")
+
+
+def _check_tool(name: str, version_args: list[str] | None = None, required: bool = True) -> bool:
+    exe = shutil.which(name)
+    if not exe:
+        if required:
+            _check_fail(name, "not found in PATH")
+        else:
+            _check_warn(name, "not found in PATH")
+        return False
+
+    if not version_args:
+        _check_ok(name, exe)
+        return True
+
+    if os.name == "nt" and Path(exe).suffix.lower() in (".bat", ".cmd"):
+        _check_ok(name, exe)
+        return True
+
+    code, output = _run_capture([name, *version_args])
+    detail = _first_output_line(output) or exe
+    if code == 0:
+        _check_ok(name, detail)
+        return True
+
+    if required:
+        _check_fail(name, detail or f"version check failed (exit={code})")
+    else:
+        _check_warn(name, detail or f"version check failed (exit={code})")
+    return False
+
+
+def _check_dotnet_sdk() -> bool:
+    if not shutil.which("dotnet"):
+        _check_fail(".NET SDK", "dotnet not found in PATH")
+        return False
+
+    code, output = _run_capture(["dotnet", "--list-sdks"])
+    if code != 0:
+        _check_fail(".NET SDK", output or f"dotnet --list-sdks failed (exit={code})")
+        return False
+
+    sdks = [line.split()[0] for line in output.splitlines() if line.strip()]
+    if any(sdk.startswith("10.") for sdk in sdks):
+        _check_ok(".NET SDK", ", ".join(sdks))
+        return True
+
+    _check_fail(".NET SDK", f"requires 10.x SDK; found {', '.join(sdks) or 'none'}")
+    return False
+
+
+def _check_net472_reference_assemblies() -> bool:
+    roots = [
+        os.environ.get("ProgramFiles(x86)"),
+        os.environ.get("ProgramFiles"),
+    ]
+    for root in roots:
+        if not root:
+            continue
+        ref_dir = Path(root) / "Reference Assemblies" / "Microsoft" / "Framework" / ".NETFramework" / "v4.7.2"
+        if (ref_dir / "mscorlib.dll").exists():
+            _check_ok(".NET Framework 4.7.2 reference assemblies", str(ref_dir))
+            return True
+    _check_fail(".NET Framework 4.7.2 reference assemblies", "required by the BepInEx plugin projects")
+    return False
+
+
+def _check_visual_studio_cpp() -> bool:
+    vswhere = Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    if vswhere.exists():
+        code, output = _run_capture([
+            str(vswhere),
+            "-latest",
+            "-products",
+            "*",
+            "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property",
+            "installationPath",
+        ])
+        install_path = _first_output_line(output)
+        if code == 0 and install_path:
+            _check_ok("Visual Studio C++ tools", install_path)
+            return True
+
+    cl = shutil.which("cl")
+    if cl:
+        _check_ok("Visual Studio C++ tools", cl)
+        return True
+
+    if VS_INSTALL_DIR.exists():
+        _check_ok("Visual Studio C++ tools", str(VS_INSTALL_DIR))
+        return True
+
+    _check_fail("Visual Studio C++ tools", "install Desktop development with C++ or Build Tools")
+    return False
+
+
+def _check_submodules() -> bool:
+    gitmodules = ROOT / ".gitmodules"
+    if not gitmodules.exists():
+        _check_warn("Git submodules", ".gitmodules not found")
+        return True
+
+    code, output = _run_capture(["git", "submodule", "status", "--recursive"], cwd=ROOT)
+    if code != 0:
+        _check_fail("Git submodules", output or "unable to read submodule status")
+        return False
+
+    bad_lines = []
+    total = 0
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        total += 1
+        state = stripped[0]
+        if state in "-+U":
+            bad_lines.append(stripped)
+
+    if bad_lines:
+        _check_fail("Git submodules", "run: git submodule update --init --recursive")
+        for line in bad_lines[:5]:
+            info(f"    {line}")
+        if len(bad_lines) > 5:
+            info(f"    ... and {len(bad_lines) - 5} more")
+        return False
+
+    _check_ok("Git submodules", f"{total} submodules initialized")
+    return True
+
+
+def _check_game_references() -> bool:
+    steam_root = os.environ.get("CHILL_STEAM_LIBRARY") or "F:\\SteamLibrary"
+    game_root = Path(steam_root) / "steamapps" / "common" / "wallpaper_engine" / "projects" / "myprojects" / "chill_with_you"
+    managed_dir = game_root / "Chill With You_Data" / "Managed"
+    bepinex_core = game_root / "BepInEx" / "core"
+
+    required_files = [
+        managed_dir / "UnityEngine.dll",
+        managed_dir / "UnityEngine.CoreModule.dll",
+        managed_dir / "Assembly-CSharp.dll",
+        bepinex_core / "BepInEx.dll",
+        bepinex_core / "0Harmony.dll",
+    ]
+
+    missing = [path for path in required_files if not path.exists()]
+    if missing:
+        _check_fail("Chill with You references", f"CHILL_STEAM_LIBRARY={steam_root}")
+        for path in missing:
+            info(f"    missing: {path}")
+        return False
+
+    _check_ok("Chill with You references", str(game_root))
+    return True
+
+
+def cmd_check(skip_flutter: bool = False) -> int:
+    print("=" * 50)
+    print("Build Environment Check")
+    print("=" * 50)
+
+    checks = [
+        _check_tool("python", ["--version"]),
+        _check_tool("git", ["--version"]),
+        _check_dotnet_sdk(),
+        _check_net472_reference_assemblies(),
+        _check_tool("go", ["version"]),
+        _check_tool("cargo", ["--version"]),
+        _check_tool("cmake", ["--version"]),
+        _check_tool("node", ["--version"]),
+        _check_tool("npm", ["--version"]),
+        _check_visual_studio_cpp(),
+        _check_submodules(),
+        _check_game_references(),
+    ]
+
+    if skip_flutter:
+        _check_warn("Flutter", "skipped by --skip-flutter")
+    else:
+        checks.append(_check_tool("flutter", ["--version"]))
+
+    failures = sum(1 for ok in checks if not ok)
+    print()
+    if failures:
+        print(f"Environment check failed: {failures} issue(s) found.")
+        return 1
+
+    print("Environment check passed.")
+    return 0
 
 
 def _rmtree_ignore_locked(path: Path):
@@ -1074,6 +1317,7 @@ def main():
   python scripts/build_all.py player --full
   python scripts/build_all.py player --skip-flutter
   python scripts/build_all.py all --full
+  python scripts/build_all.py check
   python scripts/build_all.py fh6-asset --full
   python scripts/build_all.py fh6 --full
 """,
@@ -1082,7 +1326,7 @@ def main():
         "command",
         nargs="?",
         default="all",
-        choices=["mod", "player", "fh6-asset", "fh6", "all"],
+        choices=["mod", "player", "fh6-asset", "fh6", "all", "check"],
         help="构建目标",
     )
     parser.add_argument("--full", action="store_true", help="完整构建 (clean + restore + 原生插件)")
@@ -1091,6 +1335,9 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="显示详细构建输出")
 
     args = parser.parse_args()
+
+    if args.command == "check":
+        sys.exit(cmd_check(skip_flutter=args.skip_flutter))
 
     if args.dry_run:
         print("=" * 50)
