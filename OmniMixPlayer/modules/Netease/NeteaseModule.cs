@@ -64,6 +64,7 @@ namespace OmniMixPlayer.Module.Netease
 
         // 自定义歌单
         private Dictionary<long, List<MusicInfo>> _customPlaylistMusicLists = new Dictionary<long, List<MusicInfo>>();
+        private string _customPlaylistImportStatus = "填写歌单 ID 或关键词后，点击确认导入。";
 
         #region IMusicModule
 
@@ -1338,6 +1339,11 @@ namespace OmniMixPlayer.Module.Netease
                             )
                     )
                     .AddChild(
+                        SlintUi.Row(spacing: 8)
+                            .AddChild(SlintUi.Button("import_playlists_btn", "确认导入", variant: "primary"))
+                    )
+                    .AddChild(SlintUi.Text(_customPlaylistImportStatus, fontSize: 12, color: "#64748b"))
+                    .AddChild(
                         SlintUi.Button("logout_btn", "退出登录", variant: "danger")
                     );
             }
@@ -1395,7 +1401,7 @@ namespace OmniMixPlayer.Module.Netease
                     _context?.ConfigManager?.SetValue("CustomPlaylistIds", value ?? "");
                     _context?.ConfigManager?.Save();
                     _context?.Logger.LogInformation("[{DisplayName}] Custom playlist IDs set", DisplayName);
-                    _ = RefreshCustomPlaylistsAsync();
+                    _customPlaylistImportStatus = "歌单 ID 已保存，点击确认导入后生效。";
                     PushUI?.Invoke(BuildUI());
                     break;
 
@@ -1403,8 +1409,12 @@ namespace OmniMixPlayer.Module.Netease
                     _context?.ConfigManager?.SetValue("SatonePlaylistKeywords", value ?? "");
                     _context?.ConfigManager?.Save();
                     _context?.Logger.LogInformation("[{DisplayName}] Satone keywords set", DisplayName);
-                    _ = RefreshCustomPlaylistsAsync();
+                    _customPlaylistImportStatus = "关键词已保存，点击确认导入后生效。";
                     PushUI?.Invoke(BuildUI());
+                    break;
+
+                case "import_playlists_btn":
+                    _ = ConfirmImportCustomPlaylistsAsync();
                     break;
 
                 case "qr_refresh":
@@ -1413,25 +1423,47 @@ namespace OmniMixPlayer.Module.Netease
             }
         }
 
-        private async Task RefreshCustomPlaylistsAsync()
+        private async Task ConfirmImportCustomPlaylistsAsync()
         {
-            // 重新搜索并导入自定义歌单
-            if (!_isLoggedIn) return;
+            if (!_isLoggedIn)
+            {
+                _customPlaylistImportStatus = "请先登录网易云音乐。";
+                PushUI?.Invoke(BuildUI());
+                return;
+            }
+
+            _customPlaylistImportStatus = "正在导入歌单...";
+            PushUI?.Invoke(BuildUI());
+
             try
             {
-                _customPlaylistMusicLists.Clear();
-                await SearchAndRegisterCustomPlaylistsAsync();
-                await ImportPlaylistsByIdAsync();
-                _context?.EventBus?.Publish(new PlaylistUpdatedEvent
-                {
-                    TagId = NeteaseSongRegistry.TAG_FAVORITES,
-                    UpdateType = PlaylistUpdateType.FullRefresh
-                });
+                var result = await RefreshCustomPlaylistsAsync();
+                _customPlaylistImportStatus = $"导入完成：{result.playlistCount} 个歌单，{result.songCount} 首歌曲。";
+                PushUI?.Invoke(BuildUI());
             }
             catch (Exception ex)
             {
+                _customPlaylistImportStatus = "导入失败：" + ex.Message;
                 _context?.Logger.LogError(ex, "[Netease] 刷新自定义歌单失败");
+                PushUI?.Invoke(BuildUI());
             }
+        }
+
+        private async Task<(int playlistCount, int songCount)> RefreshCustomPlaylistsAsync()
+        {
+            // 重新搜索并导入自定义歌单
+            if (!_isLoggedIn) return (0, 0);
+
+            _customPlaylistMusicLists.Clear();
+            await SearchAndRegisterCustomPlaylistsAsync();
+            await ImportPlaylistsByIdAsync();
+            _context?.EventBus?.Publish(new PlaylistUpdatedEvent
+            {
+                TagId = NeteaseSongRegistry.TAG_FAVORITES,
+                UpdateType = PlaylistUpdateType.FullRefresh
+            });
+
+            return (_customPlaylistMusicLists.Count, _customPlaylistMusicLists.Values.Sum(list => list?.Count ?? 0));
         }
 
         private async Task RefreshQRCodeAsync()

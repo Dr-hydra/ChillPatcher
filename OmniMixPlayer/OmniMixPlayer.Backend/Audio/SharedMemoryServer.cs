@@ -244,8 +244,8 @@ namespace OmniMixPlayer.Backend.Audio
 
         public void SetPlayState(int state)
         {
-            if (_ptr == null) return;
             WriteI32(SharedMemoryProtocol.LegacyPlayState, state);
+            if (_ptr == null) return;
             if (ReadI32(SharedMemoryProtocol.StreamState) == (int)SharedMemoryStreamState.Error)
                 return;
             var streamState = state switch
@@ -259,7 +259,6 @@ namespace OmniMixPlayer.Backend.Audio
 
         public void SetCurrentUuid(string uuid)
         {
-            if (_ptr == null) return;
             var bytes = System.Text.Encoding.ASCII.GetBytes(uuid ?? "");
             for (int i = 0; i < SharedMemoryProtocol.CurrentUuidLength && i < bytes.Length; i++)
                 _ptr[SharedMemoryProtocol.CurrentUuid + i] = bytes[i];
@@ -334,9 +333,16 @@ namespace OmniMixPlayer.Backend.Audio
         public void ResetCursors()
         {
             if (_ptr == null) return;
-            WriteI64(SharedMemoryProtocol.WriteCursor, 0);
-            WriteI64(SharedMemoryProtocol.ReadCursor, 0);
-            WriteI64(SharedMemoryProtocol.AudibleCursor, 0);
+            ResetCursors(0);
+        }
+
+        public void ResetCursors(long frame)
+        {
+            if (_ptr == null) return;
+            if (frame < 0) frame = 0;
+            WriteI64(SharedMemoryProtocol.WriteCursor, frame);
+            WriteI64(SharedMemoryProtocol.ReadCursor, frame);
+            WriteI64(SharedMemoryProtocol.AudibleCursor, frame);
             WriteI64(SharedMemoryProtocol.FinalWriteCursor, 0);
             WriteI64(SharedMemoryProtocol.DecodedTotalFrames, 0);
             
@@ -384,7 +390,6 @@ namespace OmniMixPlayer.Backend.Audio
 
         public void MarkDecoderEof(long decodedTotalFrames = 0)
         {
-            if (_ptr == null) return;
             var finalCursor = GetWriteCursor();
             WriteI64(SharedMemoryProtocol.FinalWriteCursor, finalCursor);
             WriteI64(SharedMemoryProtocol.DecodedTotalFrames, decodedTotalFrames > 0 ? decodedTotalFrames : finalCursor);
@@ -396,7 +401,6 @@ namespace OmniMixPlayer.Backend.Audio
 
         public void MarkEnded()
         {
-            if (_ptr == null) return;
             SetFlag(SharedMemoryStreamFlags.ClientDrained, true);
             SetStreamState(SharedMemoryStreamState.Ended);
             WriteI32(SharedMemoryProtocol.LegacyPlayState, 0);
@@ -405,7 +409,6 @@ namespace OmniMixPlayer.Backend.Audio
 
         public void MarkError(SharedMemoryStreamError error, bool syntheticEof = false)
         {
-            if (_ptr == null) return;
             WriteI32(SharedMemoryProtocol.ErrorCode, (int)error);
             SetFlag(SharedMemoryStreamFlags.StreamError, true);
             if (syntheticEof)
@@ -446,13 +449,13 @@ namespace OmniMixPlayer.Backend.Audio
         }
 
         // Header field helpers (public for PlaybackController)
-        public void WriteI32(int offset, int value) { if (_ptr == null) return; *(int*)(_ptr + offset) = value; Touch(); }
-        public void WriteI64(int offset, long value) { if (_ptr == null) return; *(long*)(_ptr + offset) = value; Touch(); }
-        public long ReadI64(int offset) { return _ptr == null ? 0 : Volatile.Read(ref *(long*)(_ptr + offset)); }
-        public int ReadI32(int offset) { return _ptr == null ? 0 : Volatile.Read(ref *(int*)(_ptr + offset)); }
-        private void WriteU32(int offset, uint value) { if (_ptr == null) return; *(uint*)(_ptr + offset) = value; }
-        private void WriteU16(int offset, ushort value) { if (_ptr == null) return; *(ushort*)(_ptr + offset) = value; }
-        private void WriteF32(int offset, float value) { if (_ptr == null) return; *(float*)(_ptr + offset) = value; }
+        public void WriteI32(int offset, int value) { *(int*)(_ptr + offset) = value; Thread.MemoryBarrier(); Touch(); }
+        public void WriteI64(int offset, long value) { *(long*)(_ptr + offset) = value; Thread.MemoryBarrier(); Touch(); }
+        public long ReadI64(int offset) { return Volatile.Read(ref *(long*)(_ptr + offset)); }
+        public int ReadI32(int offset) { return Volatile.Read(ref *(int*)(_ptr + offset)); }
+        private void WriteU32(int offset, uint value) { *(uint*)(_ptr + offset) = value; Thread.MemoryBarrier(); }
+        private void WriteU16(int offset, ushort value) { *(ushort*)(_ptr + offset) = value; Thread.MemoryBarrier(); }
+        private void WriteF32(int offset, float value) { *(float*)(_ptr + offset) = value; Thread.MemoryBarrier(); }
         private void Touch()
         {
             if (_ptr != null)
