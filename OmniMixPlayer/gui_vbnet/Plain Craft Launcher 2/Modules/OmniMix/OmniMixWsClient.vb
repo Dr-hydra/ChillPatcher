@@ -14,6 +14,8 @@ Public Class OmniMixWsClient
     }
     Private IsDisposed As Boolean = False
 
+    Public Event MessageReceived(Message As String)
+
     Public ReadOnly Property IsConnected As Boolean
         Get
             Return Socket IsNot Nothing AndAlso Socket.State = WebSocketState.Open
@@ -61,8 +63,20 @@ Public Class OmniMixWsClient
         Dim Buffer(4095) As Byte
         Try
             While IsConnected
-                Dim Result = Await Socket.ReceiveAsync(New ArraySegment(Of Byte)(Buffer), CancellationToken.None)
-                If Result.MessageType = WebSocketMessageType.Close Then Exit While
+                Using Stream As New IO.MemoryStream()
+                    Dim Result As WebSocketReceiveResult
+                    Do
+                        Result = Await Socket.ReceiveAsync(New ArraySegment(Of Byte)(Buffer), CancellationToken.None)
+                        If Result.MessageType = WebSocketMessageType.Close Then Exit While
+                        Stream.Write(Buffer, 0, Result.Count)
+                    Loop Until Result.EndOfMessage
+
+                    If Result.MessageType = WebSocketMessageType.Close Then Exit While
+                    If Result.MessageType = WebSocketMessageType.Text Then
+                        Dim Message = Encoding.UTF8.GetString(Stream.ToArray())
+                        RaiseEvent MessageReceived(Message)
+                    End If
+                End Using
             End While
         Catch
         End Try

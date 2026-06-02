@@ -951,30 +951,12 @@ namespace OmniMixPlayer.Backend.Audio
                         _lastLoopProgressChangeUtc = DateTime.UtcNow;
                     }
 
-                    // 限流和延迟控制机制：利用 AudibleCursor 追踪客户端实际听到的位置，将积压的总帧数控制在 TargetLatency 以内
-                    long audible = _sharedMemory.GetAudibleCursor();
-                    long read = _sharedMemory.GetReadCursor();
-                    bool supportsAudible = audible > 0 || read < 4096;
-                    long progress = supportsAudible ? audible : read;
-                    long write = _sharedMemory.GetWriteCursor();
-                    long inFlight = write - progress;
-                    int targetBacklogFrames = (int)(sampleRate * TargetLatency);
-                    if (targetBacklogFrames < 1024) targetBacklogFrames = 1024;
-
-                    while (inFlight > targetBacklogFrames)
+                    // Keep the original backpressure behavior: only wait when the shared-memory buffer is almost full.
+                    while (_sharedMemory.GetReadableFrames() > _sharedMemory.BufferFrames - 2048)
                     {
                         await Task.Delay(10, ct);
                         if (_playState != 1 || ct.IsCancellationRequested)
                             break;
-
-                        audible = _sharedMemory.GetAudibleCursor();
-                        read = _sharedMemory.GetReadCursor();
-                        supportsAudible = audible > 0 || read < 4096;
-                        progress = supportsAudible ? audible : read;
-                        write = _sharedMemory.GetWriteCursor();
-                        inFlight = write - progress;
-                        targetBacklogFrames = (int)(sampleRate * TargetLatency);
-                        if (targetBacklogFrames < 1024) targetBacklogFrames = 1024;
                     }
                     if (_playState != 1 || ct.IsCancellationRequested) continue;
 

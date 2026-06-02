@@ -189,6 +189,8 @@ Public Class PageOmniMixRight
         BtnBackendPathReset.Logo = Logo.IconButtonRefresh
         RemoveHandler PlaybackAutoRefreshTimer.Tick, AddressOf PlaybackAutoRefreshTimer_Tick
         AddHandler PlaybackAutoRefreshTimer.Tick, AddressOf PlaybackAutoRefreshTimer_Tick
+        RemoveHandler WsClient.MessageReceived, AddressOf WsClient_MessageReceived
+        AddHandler WsClient.MessageReceived, AddressOf WsClient_MessageReceived
         If HasCheckedBackend Then
             UpdatePlaybackAutoRefreshTimer()
             Return
@@ -199,6 +201,44 @@ Public Class PageOmniMixRight
 
     Private Sub PageOmniMixRight_Unloaded(sender As Object, e As RoutedEventArgs) Handles Me.Unloaded
         PlaybackAutoRefreshTimer.Stop()
+        RemoveHandler WsClient.MessageReceived, AddressOf WsClient_MessageReceived
+    End Sub
+
+    Private Sub WsClient_MessageReceived(Message As String)
+        If String.IsNullOrWhiteSpace(Message) Then Return
+
+        Try
+            Using Doc = JsonDocument.Parse(Message)
+                Dim Root = Doc.RootElement
+                Dim TypeElement As JsonElement
+                If Not Root.TryGetProperty("type", TypeElement) OrElse TypeElement.GetString() <> "ui_push" Then Return
+
+                Dim DataElement As JsonElement
+                If Not Root.TryGetProperty("data", DataElement) Then Return
+
+                Dim ModuleIdElement As JsonElement
+                If Not DataElement.TryGetProperty("moduleId", ModuleIdElement) Then Return
+                Dim ModuleId = ModuleIdElement.GetString()
+                If String.IsNullOrWhiteSpace(ModuleId) Then Return
+
+                Dim TreeElement As JsonElement
+                If Not DataElement.TryGetProperty("tree", TreeElement) OrElse TreeElement.ValueKind = JsonValueKind.Null Then Return
+
+                Dim Options As New JsonSerializerOptions With {.PropertyNameCaseInsensitive = True}
+                Dim Tree = JsonSerializer.Deserialize(Of OmniMixRawNodeData)(TreeElement.GetRawText(), Options)
+                If Tree Is Nothing Then Return
+
+                RunInUi(Sub()
+                            If CardModuleUi.Visibility <> Visibility.Visible Then Return
+                            If Not String.Equals(CurrentModuleId, ModuleId, StringComparison.OrdinalIgnoreCase) Then Return
+                            PanModuleUi.Children.Clear()
+                            PanModuleUi.Children.Add(OmniMixRawNodeRenderer.Render(Tree, CurrentBaseUrl, AddressOf ModuleUiEvent_Dispatch))
+                            LabModulesSummary.Text = "模块 UI 已更新：" & ExpandedModuleTitle
+                            LabModuleUiSummary.Text = "模块 UI 已更新。"
+                        End Sub)
+            End Using
+        Catch
+        End Try
     End Sub
 
     Private Async Function RefreshBackendStatusAsync() As Task
@@ -281,7 +321,15 @@ Public Class PageOmniMixRight
             TxtBackendPort.Text = ConfigString(Config, "backend_port", "17890")
             TxtBackendBind.Text = ConfigString(Config, "backend_bind", "127.0.0.1")
             Dim ConfiguredBackendPath = OmniMixBackendManager.GetConfiguredBackendPath()
-            TxtBackendPath.Text = If(String.IsNullOrWhiteSpace(ConfiguredBackendPath), If(OmniMixBackendManager.FindDefaultBackendExe(), ""), ConfiguredBackendPath)
+            Dim DefaultBackendPath = OmniMixBackendManager.FindDefaultBackendExe()
+            TxtBackendPath.HintText = If(String.IsNullOrWhiteSpace(DefaultBackendPath), "OmniMixPlayer.Backend.exe", "默认：" & DefaultBackendPath)
+            If Not String.IsNullOrWhiteSpace(ConfiguredBackendPath) AndAlso
+               Not OmniMixPlatformService.ArePathsEqual(ConfiguredBackendPath, DefaultBackendPath) Then
+                TxtBackendPath.Text = ConfiguredBackendPath
+            Else
+                TxtBackendPath.Text = ""
+                If Not String.IsNullOrWhiteSpace(ConfiguredBackendPath) Then OmniMixBackendManager.SetConfiguredBackendPath("")
+            End If
             BtnBackendPathBrowse.Logo = Logo.IconButtonOpen
             BtnBackendPathReset.Logo = Logo.IconButtonRefresh
             CheckAutostart.Checked = ConfigBoolean(Config, "autostart", False)
@@ -330,6 +378,7 @@ Public Class PageOmniMixRight
             InfoParts.Add(If(Instance.IsServerManaged, "后端控制", "客户端控制"))
             If Not String.IsNullOrWhiteSpace(Instance.GameName) Then InfoParts.Add(Instance.GameName)
             If Not String.IsNullOrWhiteSpace(Instance.ModId) Then InfoParts.Add("Mod " & Instance.ModId)
+            If Instance.Attached AndAlso Not Instance.SharedMemoryReady Then InfoParts.Add("共享内存未就绪")
             InfoParts.Add("音量 " & CInt(Math.Round(Instance.Volume * 100)) & "%")
             InfoParts.Add("队列 " & Instance.QueueCount)
 
@@ -535,7 +584,9 @@ Public Class PageOmniMixRight
 
     Private Sub BtnBackendPathReset_Click(sender As Object, e As EventArgs) Handles BtnBackendPathReset.Click
         OmniMixBackendManager.SetConfiguredBackendPath("")
-        TxtBackendPath.Text = If(OmniMixBackendManager.FindDefaultBackendExe(), "")
+        Dim DefaultBackendPath = OmniMixBackendManager.FindDefaultBackendExe()
+        TxtBackendPath.HintText = If(String.IsNullOrWhiteSpace(DefaultBackendPath), "OmniMixPlayer.Backend.exe", "默认：" & DefaultBackendPath)
+        TxtBackendPath.Text = ""
         LabSettingsSummary.Text = "已恢复为默认构建后端。"
     End Sub
 
@@ -1678,6 +1729,7 @@ Public Class PageOmniMixRight
             InfoParts.Add(If(Instance.IsServerManaged, "后端控制", "客户端控制"))
             If Not String.IsNullOrWhiteSpace(Instance.GameName) Then InfoParts.Add(Instance.GameName)
             If Not String.IsNullOrWhiteSpace(Instance.ModId) Then InfoParts.Add("Mod " & Instance.ModId)
+            If Instance.Attached AndAlso Not Instance.SharedMemoryReady Then InfoParts.Add("共享内存未就绪")
             InfoParts.Add("队列 " & Instance.QueueCount)
 
             PanGameIntegrationList.Children.Add(New MyListItem With {
@@ -1802,6 +1854,9 @@ Public Class PageOmniMixRight
             If Dialog.ShowDialog() <> System.Windows.Forms.DialogResult.OK Then Return
             OmniMixModDeploymentService.SaveGamePath(Game.Id, Dialog.SelectedPath)
             If OmniMixModDeploymentService.VerifyGameDirectory(Dialog.SelectedPath, Game) Then
+                If Not String.IsNullOrWhiteSpace(CurrentBaseUrl) Then
+                    Await OmniMixApiClient.AddPortFileDirAsync(CurrentBaseUrl, Dialog.SelectedPath)
+                End If
                 Hint("已保存游戏目录：" & Game.Name, HintType.Green)
             Else
                 Hint("目录已保存，但未通过游戏签名校验。", HintType.Red)
@@ -1881,7 +1936,7 @@ Public Class PageOmniMixRight
         If String.IsNullOrWhiteSpace(InstanceId) Then
             Hint(ModInfo.Name & " 安装失败。", HintType.Red)
         Else
-            Await RegisterDeployedInstanceAsync(InstanceId, ModInfo)
+            Await RegisterDeployedInstanceAsync(InstanceId, ModInfo, GamePath)
             Hint(ModInfo.Name & " 安装完成。", HintType.Green)
         End If
         If String.IsNullOrWhiteSpace(CurrentBaseUrl) Then RenderGameIntegration(New OmniMixInstanceStatsInfo, New List(Of OmniMixPlaybackInstanceInfo)) Else Await RefreshModulesAsync(CurrentBaseUrl)
@@ -1903,9 +1958,12 @@ Public Class PageOmniMixRight
         If String.IsNullOrWhiteSpace(CurrentBaseUrl) Then RenderGameIntegration(New OmniMixInstanceStatsInfo, New List(Of OmniMixPlaybackInstanceInfo)) Else Await RefreshModulesAsync(CurrentBaseUrl)
     End Sub
 
-    Private Async Function RegisterDeployedInstanceAsync(InstanceId As String, ModInfo As OmniMixModDeclaration) As Task
+    Private Async Function RegisterDeployedInstanceAsync(InstanceId As String, ModInfo As OmniMixModDeclaration, GamePath As String) As Task
         If String.IsNullOrWhiteSpace(CurrentBaseUrl) OrElse String.IsNullOrWhiteSpace(InstanceId) OrElse ModInfo Is Nothing Then Return
         Try
+            If Not String.IsNullOrWhiteSpace(GamePath) Then
+                Await OmniMixApiClient.AddPortFileDirAsync(CurrentBaseUrl, GamePath)
+            End If
             Await OmniMixApiClient.SetInstanceMetaAsync(CurrentBaseUrl, InstanceId, ModInfo.Id, ModInfo.Name, ModInfo.Mode)
             Await OmniMixApiClient.UpdateInstanceProfileAsync(CurrentBaseUrl, InstanceId, BuildDefaultInstanceProfile())
         Catch Ex As Exception

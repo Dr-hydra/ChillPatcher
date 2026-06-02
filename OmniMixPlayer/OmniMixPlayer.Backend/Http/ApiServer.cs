@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -7,6 +8,7 @@ using System.Net.WebSockets;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
@@ -84,7 +86,18 @@ namespace OmniMixPlayer.Backend.Http
                 var role = ParseRole(req.role);
                 var mode = req.mode?.ToLowerInvariant() == "client"
                     ? PlaybackMode.ClientManaged : PlaybackMode.ServerManaged;
-                return Results.Json(_instances.Connect(req.clientId, role, mode));
+                try
+                {
+                    return Results.Json(_instances.Connect(req.clientId, role, mode));
+                }
+                catch (InvalidOperationException ex)
+                {
+                    _logger.LogWarning(ex, "Failed to connect playback instance {ClientId}", req.clientId);
+                    return Results.Problem(
+                        detail: ex.Message,
+                        statusCode: StatusCodes.Status409Conflict,
+                        title: "Playback backend is not ready");
+                }
             });
             endpoints.MapPost("/api/instances/{id}/heartbeat", (string id) =>
                 _instances.Heartbeat(id) ? Results.Ok(new { alive = true }) : Results.NotFound(new { alive = false }));
@@ -116,8 +129,7 @@ namespace OmniMixPlayer.Backend.Http
             {
                 var instance = _instances.Get(id);
                 if (instance == null) return Results.NotFound();
-                instance.Controller.Play(req.uuid);
-                return Results.Ok();
+                return RunInstanceAction(instance, p => p.Play(req.uuid));
             });
             endpoints.MapPost("/api/instances/{id}/pause", (string id) => WithInstance(id, p => p.Pause()));
             endpoints.MapPost("/api/instances/{id}/resume", (string id) => WithInstance(id, p => p.Resume()));
@@ -852,8 +864,7 @@ namespace OmniMixPlayer.Backend.Http
         {
             var instance = _instances.Get(id);
             if (instance == null) return Results.NotFound();
-            action(instance.Controller);
-            return Results.Ok();
+            return RunInstanceAction(instance, action);
         }
 
         private IResult WithInstanceOrProfile(string id, Action<PlaybackController> onlineAction, Func<QueueSlotData, bool> offlineAction)
@@ -861,8 +872,7 @@ namespace OmniMixPlayer.Backend.Http
             var instance = _instances.Get(id);
             if (instance != null)
             {
-                onlineAction(instance.Controller);
-                return Results.Ok();
+                return RunInstanceAction(instance, onlineAction);
             }
 
             var profile = _instances.GetProfile(id);
@@ -875,6 +885,32 @@ namespace OmniMixPlayer.Backend.Http
             _ = BroadcastEvent("queue.changed", new { instanceId = id });
             _ = BroadcastEvent("instances.changed", _instances.ListInstanceDtos());
             return Results.Ok();
+        }
+
+        private IResult RunInstanceAction(PlaybackInstance instance, Action<PlaybackController> action)
+        {
+            if (instance == null) return Results.NotFound();
+            if (!instance.SharedMemoryReady)
+            {
+                return Results.Problem(
+                    detail: "Shared memory is not ready for this playback instance. Please restart the backend or game integration.",
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "Playback backend is not ready");
+            }
+
+            try
+            {
+                action(instance.Controller);
+                return Results.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Playback action failed for instance {InstanceId}", instance.Id);
+                return Results.Problem(
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "Playback action failed");
+            }
         }
 
         private static QueueSlotData GetActiveQueueData(PlaybackStateData profile)
@@ -1144,8 +1180,7 @@ namespace OmniMixPlayer.Backend.Http
 
         public async Task BroadcastEvent(string eventType, object data, string? senderId = null)
         {
-            var msg = JsonSerializer.Serialize(new { type = eventType, @event = eventType, data, senderId, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
-            var bytes = Encoding.UTF8.GetBytes(msg);
+            var bytes = SerializeEvent(eventType, data, senderId);
             var segment = new ArraySegment<byte>(bytes);
 
             List<WebSocket> sockets;
@@ -1181,6 +1216,136 @@ namespace OmniMixPlayer.Backend.Http
             }
         }
 
+        private static byte[] SerializeEvent(string eventType, object data, string? senderId)
+        {
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                writer.WriteStartObject();
+                writer.WriteString("type", eventType);
+                writer.WriteString("event", eventType);
+                writer.WritePropertyName("data");
+                WriteJsonValue(writer, data);
+                if (senderId == null) writer.WriteNull("senderId");
+                else writer.WriteString("senderId", senderId);
+                writer.WriteNumber("timestamp", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                writer.WriteEndObject();
+            }
+            return stream.ToArray();
+        }
+
+        private static void WriteJsonValue(Utf8JsonWriter writer, object value)
+        {
+            if (value == null)
+            {
+                writer.WriteNullValue();
+                return;
+            }
+
+            if (value is JsonElement element)
+            {
+                element.WriteTo(writer);
+                return;
+            }
+            if (value is JsonDocument document)
+            {
+                document.RootElement.WriteTo(writer);
+                return;
+            }
+
+            switch (value)
+            {
+                case string s:
+                    writer.WriteStringValue(s);
+                    return;
+                case char c:
+                    writer.WriteStringValue(c.ToString());
+                    return;
+                case bool b:
+                    writer.WriteBooleanValue(b);
+                    return;
+                case byte n:
+                    writer.WriteNumberValue(n);
+                    return;
+                case sbyte n:
+                    writer.WriteNumberValue(n);
+                    return;
+                case short n:
+                    writer.WriteNumberValue(n);
+                    return;
+                case ushort n:
+                    writer.WriteNumberValue(n);
+                    return;
+                case int n:
+                    writer.WriteNumberValue(n);
+                    return;
+                case uint n:
+                    writer.WriteNumberValue(n);
+                    return;
+                case long n:
+                    writer.WriteNumberValue(n);
+                    return;
+                case ulong n:
+                    writer.WriteNumberValue(n);
+                    return;
+                case float n:
+                    if (float.IsFinite(n)) writer.WriteNumberValue(n);
+                    else writer.WriteNullValue();
+                    return;
+                case double n:
+                    if (double.IsFinite(n)) writer.WriteNumberValue(n);
+                    else writer.WriteNullValue();
+                    return;
+                case decimal n:
+                    writer.WriteNumberValue(n);
+                    return;
+                case DateTime dt:
+                    writer.WriteStringValue(dt);
+                    return;
+                case DateTimeOffset dto:
+                    writer.WriteStringValue(dto);
+                    return;
+                case Enum e:
+                    writer.WriteStringValue(e.ToString());
+                    return;
+                case IDictionary dictionary:
+                    writer.WriteStartObject();
+                    foreach (DictionaryEntry entry in dictionary)
+                    {
+                        if (entry.Key == null) continue;
+                        writer.WritePropertyName(entry.Key.ToString());
+                        WriteJsonValue(writer, entry.Value);
+                    }
+                    writer.WriteEndObject();
+                    return;
+                case IEnumerable enumerable:
+                    writer.WriteStartArray();
+                    foreach (var item in enumerable)
+                        WriteJsonValue(writer, item);
+                    writer.WriteEndArray();
+                    return;
+            }
+
+            writer.WriteStartObject();
+            foreach (var prop in value.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public))
+            {
+                if (!prop.CanRead || prop.GetIndexParameters().Length > 0) continue;
+                var propValue = prop.GetValue(value);
+                if (propValue == null) continue;
+                writer.WritePropertyName(GetJsonPropertyName(prop));
+                WriteJsonValue(writer, propValue);
+            }
+            writer.WriteEndObject();
+        }
+
+        private static string GetJsonPropertyName(PropertyInfo prop)
+        {
+            var attr = prop.GetCustomAttribute<JsonPropertyNameAttribute>();
+            if (!string.IsNullOrEmpty(attr?.Name)) return attr.Name;
+            if (prop.Name.Length == 0) return prop.Name;
+            return char.ToLowerInvariant(prop.Name[0]) + prop.Name.Substring(1);
+        }
+
         private static object ConvertElement(JsonElement element)
         {
             switch (element.ValueKind)
@@ -1193,6 +1358,16 @@ namespace OmniMixPlayer.Backend.Http
                 case JsonValueKind.True: return true;
                 case JsonValueKind.False: return false;
                 case JsonValueKind.Null: return null;
+                case JsonValueKind.Array:
+                    var list = new List<object>();
+                    foreach (var item in element.EnumerateArray())
+                        list.Add(ConvertElement(item));
+                    return list;
+                case JsonValueKind.Object:
+                    var dict = new Dictionary<string, object>();
+                    foreach (var prop in element.EnumerateObject())
+                        dict[prop.Name] = ConvertElement(prop.Value);
+                    return dict;
                 default: return element.GetRawText();
             }
         }

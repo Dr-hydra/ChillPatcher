@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -75,6 +76,17 @@ namespace OmniMixPlayer.Backend.Http
                     return element.GetRawText();
                 case JsonValueKind.True: return true;
                 case JsonValueKind.False: return false;
+                case JsonValueKind.Null: return null;
+                case JsonValueKind.Array:
+                    var list = new List<object>();
+                    foreach (var item in element.EnumerateArray())
+                        list.Add(ConvertElement(item));
+                    return list;
+                case JsonValueKind.Object:
+                    var dict = new Dictionary<string, object>();
+                    foreach (var prop in element.EnumerateObject())
+                        dict[prop.Name] = ConvertElement(prop.Value);
+                    return dict;
                 default: return element.GetRawText();
             }
         }
@@ -143,8 +155,93 @@ namespace OmniMixPlayer.Backend.Http
                 return ParseElement(floatValue.ToString("R", CultureInfo.InvariantCulture));
             if (value is decimal decimalValue)
                 return ParseElement(decimalValue.ToString(CultureInfo.InvariantCulture));
+            if (value is IDictionary || value is IEnumerable)
+                return WriteToElement(value);
 
             return ParseElement($"\"{JsonEncodedText.Encode(value.ToString() ?? string.Empty)}\"");
+        }
+
+        private static JsonElement WriteToElement(object value)
+        {
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                WriteJsonValue(writer, value);
+            }
+            return ParseElement(System.Text.Encoding.UTF8.GetString(stream.ToArray()));
+        }
+
+        private static void WriteJsonValue(Utf8JsonWriter writer, object value)
+        {
+            if (value == null)
+            {
+                writer.WriteNullValue();
+                return;
+            }
+            if (value is JsonElement element)
+            {
+                element.WriteTo(writer);
+                return;
+            }
+            if (value is string s)
+            {
+                writer.WriteStringValue(s);
+                return;
+            }
+            if (value is bool b)
+            {
+                writer.WriteBooleanValue(b);
+                return;
+            }
+            if (value is int i)
+            {
+                writer.WriteNumberValue(i);
+                return;
+            }
+            if (value is long l)
+            {
+                writer.WriteNumberValue(l);
+                return;
+            }
+            if (value is double d)
+            {
+                if (double.IsFinite(d)) writer.WriteNumberValue(d);
+                else writer.WriteNullValue();
+                return;
+            }
+            if (value is float f)
+            {
+                if (float.IsFinite(f)) writer.WriteNumberValue(f);
+                else writer.WriteNullValue();
+                return;
+            }
+            if (value is decimal dec)
+            {
+                writer.WriteNumberValue(dec);
+                return;
+            }
+            if (value is IDictionary dictionary)
+            {
+                writer.WriteStartObject();
+                foreach (DictionaryEntry entry in dictionary)
+                {
+                    if (entry.Key == null) continue;
+                    writer.WritePropertyName(entry.Key.ToString());
+                    WriteJsonValue(writer, entry.Value);
+                }
+                writer.WriteEndObject();
+                return;
+            }
+            if (value is IEnumerable enumerable)
+            {
+                writer.WriteStartArray();
+                foreach (var item in enumerable)
+                    WriteJsonValue(writer, item);
+                writer.WriteEndArray();
+                return;
+            }
+
+            writer.WriteStringValue(value.ToString() ?? string.Empty);
         }
 
         private static JsonElement ParseElement(string json)

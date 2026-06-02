@@ -37,6 +37,7 @@ namespace OmniMixPlayer.Backend.Audio
         public DateTime? DetachedAt { get; set; }
         public SharedMemoryServer SharedMemory { get; init; }
         public PlaybackController Controller { get; init; }
+        public bool SharedMemoryReady { get; init; }
         public bool IsAttached => DetachedAt == null;
         public string SharedMemoryName => SharedMemory?.MapName;
 
@@ -122,10 +123,32 @@ namespace OmniMixPlayer.Backend.Audio
 
                 if (!_instances.TryGetValue(clientId, out var instance))
                 {
-                    var mapName = $@"Global\OmniMixPlayer_PCM_{clientId}";
-                    var sharedMemory = new SharedMemoryServer(_loggerFactory.CreateLogger($"SharedMemory.{clientId}"), mapName);
-                    if (!sharedMemory.Initialize())
-                        _logger.LogWarning("Failed to initialize shared memory for instance {InstanceId}", clientId);
+                    var mapCandidates = new[]
+                    {
+                        $@"Global\OmniMixPlayer_PCM_{clientId}",
+                        $@"Local\OmniMixPlayer_PCM_{clientId}"
+                    };
+                    SharedMemoryServer sharedMemory = null;
+                    var mapName = "";
+                    foreach (var candidate in mapCandidates)
+                    {
+                        var candidateMemory = new SharedMemoryServer(_loggerFactory.CreateLogger($"SharedMemory.{clientId}"), candidate);
+                        if (candidateMemory.Initialize())
+                        {
+                            sharedMemory = candidateMemory;
+                            mapName = candidate;
+                            break;
+                        }
+
+                        candidateMemory.Dispose();
+                        _logger.LogWarning("Failed to initialize shared memory for instance {InstanceId} with map {MapName}", clientId, candidate);
+                    }
+
+                    if (sharedMemory == null)
+                    {
+                        _clients.Remove(clientId);
+                        throw new InvalidOperationException("Shared memory initialization failed for this playback instance.");
+                    }
 
                     var configDir = _configBaseDir != null
                         ? Path.Combine(_configBaseDir, "instances", clientId)
@@ -152,7 +175,8 @@ namespace OmniMixPlayer.Backend.Audio
                         CreatedAt = now,
                         LastHeartbeat = now,
                         SharedMemory = sharedMemory,
-                        Controller = controller
+                        Controller = controller,
+                        SharedMemoryReady = true
                     };
                     _instances[clientId] = instance;
                     SaveInstanceMeta(clientId, mode);
@@ -417,16 +441,14 @@ namespace OmniMixPlayer.Backend.Audio
             {
                 try
                 {
-                    var json = File.ReadAllText(file);
-                    var entry = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
-                    if (entry == null) continue;
+                    var entry = ReadStringMap(file);
                     list.Add(new
                     {
-                        instanceId = entry.TryGetValue("instanceId", out var v) ? v.GetString() : "",
-                        label = entry.TryGetValue("label", out var l) ? l.GetString() : "",
-                        archivedAt = entry.TryGetValue("archivedAt", out var d) ? d.GetString() : "",
-                        modId = entry.TryGetValue("modId", out var m) ? m.GetString() : "",
-                        mode = entry.TryGetValue("mode", out var md) ? md.GetString() : "",
+                        instanceId = entry.TryGetValue("instanceId", out var v) ? v : "",
+                        label = entry.TryGetValue("label", out var l) ? l : "",
+                        archivedAt = entry.TryGetValue("archivedAt", out var d) ? d : "",
+                        modId = entry.TryGetValue("modId", out var m) ? m : "",
+                        mode = entry.TryGetValue("mode", out var md) ? md : "",
                     });
                 }
                 catch { }
@@ -520,13 +542,9 @@ namespace OmniMixPlayer.Backend.Audio
             if (!File.Exists(path)) return false;
             try
             {
-                var json = File.ReadAllText(path);
-                using var doc = JsonDocument.Parse(json);
-                var dict = new Dictionary<string, object>();
-                foreach (var prop in doc.RootElement.EnumerateObject())
-                    dict[prop.Name] = prop.Value.ValueKind == JsonValueKind.String ? prop.Value.GetString() : prop.Value.GetRawText();
+                var dict = ReadStringMap(path);
                 dict["label"] = label;
-                File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(dict));
+                WriteStringMap(path, dict);
                 return true;
             }
             catch { return false; }
@@ -541,7 +559,7 @@ namespace OmniMixPlayer.Backend.Audio
             {
                 var archiveDir = ArchiveDir;
                 Directory.CreateDirectory(archiveDir);
-                var archive = new Dictionary<string, object>
+                var archive = new Dictionary<string, string>
                 {
                     ["instanceId"] = id,
                     ["archivedAt"] = DateTime.UtcNow.ToString("O"),
@@ -549,8 +567,7 @@ namespace OmniMixPlayer.Backend.Audio
                     ["modId"] = modId ?? "",
                     ["mode"] = mode ?? ""
                 };
-                File.WriteAllText(Path.Combine(archiveDir, $"{id}.json"),
-                    System.Text.Json.JsonSerializer.Serialize(archive));
+                WriteStringMap(Path.Combine(archiveDir, $"{id}.json"), archive);
                 _logger.LogInformation("Archived instance {Id} with label '{Label}'", id, label);
                 return true;
             }
@@ -580,16 +597,12 @@ namespace OmniMixPlayer.Backend.Audio
                 var path = Path.Combine(dir, "meta.json");
 
                 // Preserve existing fields if present
-                var meta = new Dictionary<string, object>();
+                var meta = new Dictionary<string, string>();
                 if (File.Exists(path))
                 {
                     try
                     {
-                        var existing = JsonSerializer.Deserialize<Dictionary<string, object>>(File.ReadAllText(path));
-                        if (existing != null)
-                        {
-                            foreach (var kv in existing) meta[kv.Key] = kv.Value;
-                        }
+                        foreach (var kv in ReadStringMap(path)) meta[kv.Key] = kv.Value;
                     }
                     catch { }
                 }
@@ -601,7 +614,7 @@ namespace OmniMixPlayer.Backend.Audio
                 else if (!meta.ContainsKey("mode"))
                     meta["mode"] = "ServerManaged";
 
-                File.WriteAllText(path, JsonSerializer.Serialize(meta));
+                WriteStringMap(path, meta);
                 return true;
             }
             catch { return false; }
@@ -670,6 +683,7 @@ namespace OmniMixPlayer.Backend.Audio
                     queueCount,
                     queueIndex = 0,
                     historyCount,
+                    sharedMemoryReady = false,
                     sampleRate = 0,
                     channels = 0,
                     shuffle = activeQueue?.Shuffle ?? false,
@@ -785,6 +799,7 @@ namespace OmniMixPlayer.Backend.Audio
             role = "audio",
             mode = instance.Mode.ToString(),
             sharedMemoryName = instance.SharedMemoryName,
+            sharedMemoryReady = instance.SharedMemoryReady,
             cleanupAfterSeconds = DetachedTtlSeconds,
             heartbeatTimeoutSeconds = HeartbeatTimeoutSeconds
         };
@@ -796,6 +811,7 @@ namespace OmniMixPlayer.Backend.Audio
             role = "audio",
             mode = instance.Mode.ToString(),
             attached = instance.IsAttached,
+            sharedMemoryReady = instance.SharedMemoryReady,
             isPlaying = instance.Controller.IsPlaying,
             position = instance.Controller.Position,
             volume = instance.Controller.Volume,
@@ -836,6 +852,7 @@ namespace OmniMixPlayer.Backend.Audio
             queueCount = instance.Controller.QueueCount,
             queueIndex = instance.Controller.QueueIndex,
             historyCount = instance.Controller.HistoryCount,
+            sharedMemoryReady = instance.SharedMemoryReady,
             shuffle = instance.Controller.Shuffle,
             repeatMode = instance.Controller.RepeatMode.ToString().ToLowerInvariant(),
             sampleRate = instance.SharedMemory?.SampleRate ?? 0,
@@ -865,26 +882,50 @@ namespace OmniMixPlayer.Backend.Audio
                 var path = Path.Combine(dir, "meta.json");
 
                 // Read existing meta (modId, gameName) and merge with mode
-                var meta = new Dictionary<string, object>();
+                var meta = new Dictionary<string, string>();
                 if (File.Exists(path))
                 {
                     try
                     {
-                        var existing = JsonSerializer.Deserialize<Dictionary<string, object>>(File.ReadAllText(path));
-                        if (existing != null)
-                        {
-                            foreach (var kv in existing) meta[kv.Key] = kv.Value;
-                        }
+                        foreach (var kv in ReadStringMap(path)) meta[kv.Key] = kv.Value;
                     }
                     catch { }
                 }
                 meta["mode"] = mode.ToString();
-                File.WriteAllText(path, JsonSerializer.Serialize(meta));
+                WriteStringMap(path, meta);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to save instance meta for {Id}", id);
             }
+        }
+
+        private static Dictionary<string, string> ReadStringMap(string path)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return result;
+
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                result[prop.Name] = prop.Value.ValueKind == JsonValueKind.String
+                    ? prop.Value.GetString() ?? ""
+                    : prop.Value.GetRawText();
+            }
+
+            return result;
+        }
+
+        private static void WriteStringMap(string path, IReadOnlyDictionary<string, string> values)
+        {
+            using var stream = File.Create(path);
+            using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
+            writer.WriteStartObject();
+            foreach (var kv in values)
+            {
+                writer.WriteString(kv.Key, kv.Value ?? "");
+            }
+            writer.WriteEndObject();
         }
 
         private string ReadInstanceMode(string id)

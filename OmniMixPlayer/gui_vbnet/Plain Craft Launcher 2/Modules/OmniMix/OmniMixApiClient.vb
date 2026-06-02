@@ -94,6 +94,7 @@ Public Class OmniMixPlaybackInstanceInfo
     Public Property CurrentTrack As OmniMixTrackInfo
     Public Property ModId As String = ""
     Public Property GameName As String = ""
+    Public Property SharedMemoryReady As Boolean = True
 
     Public ReadOnly Property IsServerManaged As Boolean
         Get
@@ -409,6 +410,40 @@ Public Module OmniMixApiClient
         Await PostEmptyAsync(BaseUrl, "/api/config/save")
     End Function
 
+    Public Async Function AddPortFileDirAsync(BaseUrl As String, DirectoryPath As String) As Task
+        If String.IsNullOrWhiteSpace(BaseUrl) OrElse String.IsNullOrWhiteSpace(DirectoryPath) Then Return
+
+        Dim FullPath As String
+        Try
+            FullPath = Path.GetFullPath(DirectoryPath)
+        Catch
+            FullPath = DirectoryPath.Trim()
+        End Try
+
+        Dim Config = Await GetConfigAsync(BaseUrl)
+        Dim Dirs As New List(Of String)
+        Dim Existing As JsonElement
+        If Config.TryGetValue("port_file_dirs", Existing) Then
+            If Existing.ValueKind = JsonValueKind.Array Then
+                For Each Item In Existing.EnumerateArray()
+                    If Item.ValueKind = JsonValueKind.String AndAlso Not String.IsNullOrWhiteSpace(Item.GetString()) Then
+                        Dirs.Add(Item.GetString())
+                    End If
+                Next
+            ElseIf Existing.ValueKind = JsonValueKind.String AndAlso Not String.IsNullOrWhiteSpace(Existing.GetString()) Then
+                Dirs.Add(Existing.GetString())
+            End If
+        End If
+
+        If Dirs.Any(Function(Item) ArePathsEqual(Item, FullPath)) Then Return
+        Dirs.Add(FullPath)
+
+        Await PutConfigRawAsync(BaseUrl, New Dictionary(Of String, Object) From {
+            {"port_file_dirs", Dirs.ToArray()}
+        })
+        Await SaveConfigAsync(BaseUrl)
+    End Function
+
     Public Async Function StopBackendAsync(BaseUrl As String) As Task
         Await PostEmptyAsync(BaseUrl, "/api/backend/stop")
     End Function
@@ -592,6 +627,14 @@ Public Module OmniMixApiClient
         If Not String.IsNullOrWhiteSpace(PublicDir) Then Dirs.Insert(1, Path.Combine(PublicDir, "OmniMixPlayer"))
 
         Return Dirs.Distinct(StringComparer.OrdinalIgnoreCase)
+    End Function
+
+    Private Function ArePathsEqual(PathA As String, PathB As String) As Boolean
+        Try
+            Return String.Equals(Path.GetFullPath(PathA).TrimEnd("\"c, "/"c), Path.GetFullPath(PathB).TrimEnd("\"c, "/"c), StringComparison.OrdinalIgnoreCase)
+        Catch
+            Return String.Equals(If(PathA, "").TrimEnd("\"c, "/"c), If(PathB, "").TrimEnd("\"c, "/"c), StringComparison.OrdinalIgnoreCase)
+        End Try
     End Function
 
 End Module
