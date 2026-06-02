@@ -19,6 +19,7 @@ using OmniMixPlayer.Backend.ModuleSystem;
 using OmniMixPlayer.Backend.ModuleSystem.Registry;
 using OmniMixPlayer.SDK.Events;
 using OmniMixPlayer.SDK.Interfaces;
+using OmniMixPlayer.SDK.Models;
 
 namespace OmniMixPlayer.Backend.Http
 {
@@ -204,16 +205,7 @@ namespace OmniMixPlayer.Backend.Http
             {
                 var instance = _instances.Get(id);
                 if (instance != null)
-                    return Results.Json(instance.Controller.Queue.Select((m, i) => new
-                    {
-                        index = i,
-                        uuid = m.UUID,
-                        title = m.Title,
-                        artist = m.Artist,
-                        albumId = m.AlbumId,
-                        duration = m.Duration,
-                        moduleId = m.ModuleId
-                    }));
+                    return Results.Json(instance.Controller.Queue.Select((m, i) => MapTrack(m, i)));
                 // Offline fallback: read from profile file
                 var offline = TryGetOfflineProfile(id);
                 if (offline == null) return Results.NotFound();
@@ -223,7 +215,7 @@ namespace OmniMixPlayer.Backend.Http
             {
                 var instance = _instances.Get(id);
                 if (instance != null)
-                    return Results.Json(instance.Controller.Playlist.Select((m, i) => new { index = i, uuid = m.UUID, title = m.Title, artist = m.Artist, albumId = m.AlbumId, moduleId = m.ModuleId }));
+                    return Results.Json(instance.Controller.Playlist.Select((m, i) => MapTrack(m, i)));
                 // Offline fallback: read from profile file
                 var offline = TryGetOfflineProfile(id);
                 if (offline == null) return Results.NotFound();
@@ -246,34 +238,25 @@ namespace OmniMixPlayer.Backend.Http
             endpoints.MapPost("/api/instances/{id}/queue/insert", (string id, QueueInsertRequest req) => WithInstance(id, p => p.InsertIntoQueue(req.uuids ?? Array.Empty<string>(), req.index)));
             endpoints.MapPut("/api/instances/{id}/queue", (string id, QueueReplaceRequest req) => WithInstance(id, p => p.SetQueue(req.uuids ?? Array.Empty<string>())));
             endpoints.MapPost("/api/instances/{id}/queue/replace", (string id, QueueReplaceRequest req) => WithInstance(id, p => p.SetQueue(req.uuids ?? Array.Empty<string>())));
-            endpoints.MapDelete("/api/instances/{id}/queue/{index}", (string id, int index) => WithInstance(id, p => p.RemoveFromQueue(index)));
-            endpoints.MapDelete("/api/instances/{id}/queue/by-uuid/{uuid}", (string id, string uuid) => WithInstance(id, p => p.RemoveFromQueue(uuid)));
-            endpoints.MapPost("/api/instances/{id}/queue/move", (string id, MoveRequest req) => WithInstance(id, p => p.MoveInQueue(req.from, req.to)));
-            endpoints.MapPost("/api/instances/{id}/queue/clear", (string id) => WithInstance(id, p => p.ClearQueue()));
+            endpoints.MapDelete("/api/instances/{id}/queue/{index}", (string id, int index) => WithInstanceOrProfile(id, p => p.RemoveFromQueue(index), q => RemoveAt(q.SongUuids, index)));
+            endpoints.MapDelete("/api/instances/{id}/queue/by-uuid/{uuid}", (string id, string uuid) => WithInstanceOrProfile(id, p => p.RemoveFromQueue(uuid), q => RemoveUuid(q.SongUuids, uuid)));
+            endpoints.MapPost("/api/instances/{id}/queue/move", (string id, MoveRequest req) => WithInstanceOrProfile(id, p => p.MoveInQueue(req.from, req.to), q => MoveInList(q.SongUuids, req.from, req.to)));
+            endpoints.MapPost("/api/instances/{id}/queue/clear", (string id) => WithInstanceOrProfile(id, p => p.ClearQueue(), q => { q.SongUuids?.Clear(); return true; }));
             endpoints.MapGet("/api/instances/{id}/history", (string id) =>
             {
                 var instance = _instances.Get(id);
                 if (instance != null)
-                    return Results.Json(instance.Controller.History.Select((m, i) => new
-                    {
-                        index = i,
-                        uuid = m.UUID,
-                        title = m.Title,
-                        artist = m.Artist,
-                        albumId = m.AlbumId,
-                        duration = m.Duration,
-                        moduleId = m.ModuleId
-                    }));
+                    return Results.Json(instance.Controller.History.Select((m, i) => MapTrack(m, i)));
                 // Offline fallback: read from profile file
                 var offline = TryGetOfflineProfile(id);
                 if (offline == null) return Results.NotFound();
                 return Results.Json(offline.History);
             });
             endpoints.MapPost("/api/instances/{id}/history/insert", (string id, QueueInsertRequest req) => WithInstance(id, p => p.InsertIntoHistory(req.uuids ?? Array.Empty<string>(), req.index)));
-            endpoints.MapDelete("/api/instances/{id}/history/{index}", (string id, int index) => WithInstance(id, p => p.RemoveFromHistory(index)));
-            endpoints.MapDelete("/api/instances/{id}/history/by-uuid/{uuid}", (string id, string uuid) => WithInstance(id, p => p.RemoveFromHistory(uuid)));
-            endpoints.MapPost("/api/instances/{id}/history/move", (string id, MoveRequest req) => WithInstance(id, p => p.MoveInHistory(req.from, req.to)));
-            endpoints.MapPost("/api/instances/{id}/history/clear", (string id) => WithInstance(id, p => p.ClearHistory()));
+            endpoints.MapDelete("/api/instances/{id}/history/{index}", (string id, int index) => WithInstanceOrProfile(id, p => p.RemoveFromHistory(index), q => RemoveAt(q.HistoryUuids, index, () => q.HistoryPosition = -1)));
+            endpoints.MapDelete("/api/instances/{id}/history/by-uuid/{uuid}", (string id, string uuid) => WithInstanceOrProfile(id, p => p.RemoveFromHistory(uuid), q => RemoveUuid(q.HistoryUuids, uuid, () => q.HistoryPosition = -1)));
+            endpoints.MapPost("/api/instances/{id}/history/move", (string id, MoveRequest req) => WithInstanceOrProfile(id, p => p.MoveInHistory(req.from, req.to), q => MoveInList(q.HistoryUuids, req.from, req.to)));
+            endpoints.MapPost("/api/instances/{id}/history/clear", (string id) => WithInstanceOrProfile(id, p => p.ClearHistory(), q => { q.HistoryUuids?.Clear(); q.HistoryPosition = -1; return true; }));
 
             // Growable tags (paginated loading)
             endpoints.MapGet("/api/tags/growable", () =>
@@ -322,7 +305,7 @@ namespace OmniMixPlayer.Backend.Http
             endpoints.MapGet("/api/modules", () => Results.Json(_moduleLoader.LoadedModules.Select(m =>
             {
                 var uiProvider = m.Module as IModuleUIProvider;
-                var hasSettingsUI = uiProvider != null;
+                var hasSettingsUI = uiProvider?.HasSettingsUI ?? false;
                 var hasQuickLinks = uiProvider?.HasQuickLinks ?? false;
                 var linkEntries = new List<object>();
                 if (hasQuickLinks)
@@ -661,11 +644,11 @@ namespace OmniMixPlayer.Backend.Http
             endpoints.MapGet("/api/modules/{id}/settings", (string id) =>
             {
                 var module = _moduleLoader.GetModule(id);
-                if (module is IModuleUIProvider uiProvider && uiProvider.HasSettingsUI)
+                if (module is IModuleUIProvider uiProvider)
                 {
                     try
                     {
-                        var tree = uiProvider.BuildSettingsUI();
+                        var tree = uiProvider.HasSettingsUI ? uiProvider.BuildSettingsUI() : uiProvider.BuildUI();
                         if (tree == null)
                             return Results.Json(new { id = "root", nodeType = "Text", text = "No settings UI available" });
                         tree.FinalizeSources();
@@ -764,9 +747,46 @@ namespace OmniMixPlayer.Backend.Http
                 albumId = m.AlbumId ?? "",
                 duration = m.Duration,
                 moduleId = m.ModuleId ?? "",
+                coverUrl = m.CoverUrl ?? "",
+                imageUrl = m.CoverUrl ?? "",
                 isFavorite = m.IsFavorite,
                 isExcluded = m.IsExcluded
             };
+        }
+
+        private static object MapTrack(MusicInfo m, int index)
+        {
+            return new
+            {
+                index,
+                uuid = m?.UUID ?? "",
+                title = m?.Title ?? m?.UUID ?? "",
+                artist = m?.Artist ?? "",
+                albumId = m?.AlbumId ?? "",
+                duration = m?.Duration ?? 0,
+                moduleId = m?.ModuleId ?? "",
+                coverUrl = m?.CoverUrl ?? "",
+                imageUrl = m?.CoverUrl ?? ""
+            };
+        }
+
+        private object MapStoredTrack(string uuid, int index)
+        {
+            var music = string.IsNullOrWhiteSpace(uuid) ? null : _musicRegistry.GetMusic(uuid);
+            return music != null
+                ? MapTrack(music, index)
+                : new
+                {
+                    index,
+                    uuid = uuid ?? "",
+                    title = uuid ?? "",
+                    artist = "",
+                    albumId = "",
+                    duration = 0.0,
+                    moduleId = "",
+                    coverUrl = "",
+                    imageUrl = ""
+                };
         }
 
         public async Task<(byte[] data, string mimeType)> GetCoverAsync(string uuid)
@@ -836,6 +856,59 @@ namespace OmniMixPlayer.Backend.Http
             return Results.Ok();
         }
 
+        private IResult WithInstanceOrProfile(string id, Action<PlaybackController> onlineAction, Func<QueueSlotData, bool> offlineAction)
+        {
+            var instance = _instances.Get(id);
+            if (instance != null)
+            {
+                onlineAction(instance.Controller);
+                return Results.Ok();
+            }
+
+            var profile = _instances.GetProfile(id);
+            var queue = GetActiveQueueData(profile);
+            if (queue == null) return Results.NotFound();
+
+            if (!offlineAction(queue)) return Results.NotFound();
+
+            _instances.DbService.SaveProfile(profile);
+            _ = BroadcastEvent("queue.changed", new { instanceId = id });
+            _ = BroadcastEvent("instances.changed", _instances.ListInstanceDtos());
+            return Results.Ok();
+        }
+
+        private static QueueSlotData GetActiveQueueData(PlaybackStateData profile)
+        {
+            if (profile?.Queues == null || profile.Queues.Count == 0) return null;
+            var activeId = profile.ActiveQueueId ?? "default";
+            return profile.Queues.FirstOrDefault(q => q.Id == activeId) ?? profile.Queues.FirstOrDefault();
+        }
+
+        private static bool RemoveAt(List<string> target, int index, Action onChanged = null)
+        {
+            if (target == null || index < 0 || index >= target.Count) return false;
+            target.RemoveAt(index);
+            onChanged?.Invoke();
+            return true;
+        }
+
+        private static bool RemoveUuid(List<string> target, string uuid, Action onChanged = null)
+        {
+            if (target == null || string.IsNullOrEmpty(uuid)) return false;
+            var removed = target.RemoveAll(u => u == uuid) > 0;
+            if (removed) onChanged?.Invoke();
+            return removed;
+        }
+
+        private static bool MoveInList(List<string> target, int from, int to)
+        {
+            if (target == null || from < 0 || from >= target.Count || to < 0 || to >= target.Count) return false;
+            var item = target[from];
+            target.RemoveAt(from);
+            target.Insert(to, item);
+            return true;
+        }
+
         /// <summary>
         /// Try to read queue/playlist/sources/history from the offline profile file.
         /// Returns null if the profile doesn't exist or can't be parsed.
@@ -864,17 +937,7 @@ namespace OmniMixPlayer.Backend.Http
                     foreach (var uuid in activeQueue.SongUuids)
                     {
                         if (string.IsNullOrEmpty(uuid)) continue;
-                        var m = _musicRegistry.GetMusic(uuid);
-                        result.Queue.Add(new
-                        {
-                            index = index++,
-                            uuid,
-                            title = m?.Title ?? uuid,
-                            artist = m?.Artist ?? "",
-                            albumId = m?.AlbumId ?? "",
-                            duration = m?.Duration ?? 0.0,
-                            moduleId = m?.ModuleId ?? ""
-                        });
+                        result.Queue.Add(MapStoredTrack(uuid, index++));
                     }
                 }
 
@@ -885,17 +948,7 @@ namespace OmniMixPlayer.Backend.Http
                     foreach (var uuid in activeQueue.HistoryUuids)
                     {
                         if (string.IsNullOrEmpty(uuid)) continue;
-                        var m = _musicRegistry.GetMusic(uuid);
-                        result.History.Add(new
-                        {
-                            index = index++,
-                            uuid,
-                            title = m?.Title ?? uuid,
-                            artist = m?.Artist ?? "",
-                            albumId = m?.AlbumId ?? "",
-                            duration = m?.Duration ?? 0.0,
-                            moduleId = m?.ModuleId ?? ""
-                        });
+                        result.History.Add(MapStoredTrack(uuid, index++));
                     }
                 }
 
@@ -914,16 +967,7 @@ namespace OmniMixPlayer.Backend.Http
                             foreach (var uuid in s.SongUuids)
                             {
                                 if (string.IsNullOrEmpty(uuid)) continue;
-                                var m = _musicRegistry.GetMusic(uuid);
-                                result.Playlist.Add(new
-                                {
-                                    index = result.Playlist.Count,
-                                    uuid,
-                                    title = m?.Title ?? uuid,
-                                    artist = m?.Artist ?? "",
-                                    albumId = m?.AlbumId ?? "",
-                                    moduleId = m?.ModuleId ?? ""
-                                });
+                                result.Playlist.Add(MapStoredTrack(uuid, result.Playlist.Count));
                             }
                         }
                         result.Sources.Add(new
@@ -1009,7 +1053,9 @@ namespace OmniMixPlayer.Backend.Http
                 artist = track?.Artist,
                 albumId = track?.AlbumId,
                 duration = track?.Duration ?? 0,
-                moduleId = track?.ModuleId
+                moduleId = track?.ModuleId,
+                coverUrl = track?.CoverUrl,
+                imageUrl = track?.CoverUrl
             });
         }
 

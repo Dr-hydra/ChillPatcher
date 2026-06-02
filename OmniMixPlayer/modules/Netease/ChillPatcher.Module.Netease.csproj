@@ -8,7 +8,7 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <AssemblyName>OmniMixPlayer.Module.Netease</AssemblyName>
-    <OutputPath>..\..\bin\Modules\Netease\</OutputPath>
+    <OutputPath>..\..\bin\Backend\win-x64\modules\com.chillpatcher.netease\</OutputPath>
     <RootNamespace>OmniMixPlayer.Module.Netease</RootNamespace>
   </PropertyGroup>
 
@@ -35,5 +35,11 @@
     </EmbeddedResource>
   </ItemGroup>
 
-</Project>
+
+  <ItemGroup>
+    <Content Include="native\x64\ChillNetease.dll" Condition="Exists('native\x64\ChillNetease.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>native\x64\ChillNetease.dll</Link>
+    </Content>
+  </ItemGroup></Project>
 

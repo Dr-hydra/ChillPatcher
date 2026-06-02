@@ -8,7 +8,7 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <AssemblyName>OmniMixPlayer.Module.Spotify</AssemblyName>
-    <OutputPath>..\..\bin\Modules\Spotify\</OutputPath>
+    <OutputPath>..\..\bin\Backend\win-x64\modules\com.chillpatcher.spotify\</OutputPath>
     <RootNamespace>OmniMixPlayer.Module.Spotify</RootNamespace>
   </PropertyGroup>
 

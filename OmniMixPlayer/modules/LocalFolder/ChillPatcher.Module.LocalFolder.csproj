@@ -8,7 +8,7 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <AssemblyName>OmniMixPlayer.Module.LocalFolder</AssemblyName>
-    <OutputPath>..\..\bin\Modules\LocalFolder\</OutputPath>
+    <OutputPath>..\..\bin\Backend\win-x64\modules\com.chillpatcher.localfolder\</OutputPath>
     <RootNamespace>OmniMixPlayer.Module.LocalFolder</RootNamespace>
   </PropertyGroup>
 

@@ -48,7 +48,6 @@ namespace OmniMixPlayer.Backend.Audio
         private float _targetLatency = 0.1f;
         private readonly Random _rng = new Random();
         private readonly object _lock = new object();
-
         private IPcmStreamReader _currentReader;
         private bool _disposed;
         private long _lastHandledSeekGeneration;
@@ -353,7 +352,6 @@ namespace OmniMixPlayer.Backend.Audio
                 {
                     Position = positionSeconds;
 
-                    // Align the shared memory cursors to the seek target frame
                     _sharedMemory.WriteI64(SharedMemoryProtocol.WriteCursor, shmTargetFrame);
                     _sharedMemory.WriteI64(SharedMemoryProtocol.ReadCursor, shmTargetFrame);
                     _sharedMemory.WriteI64(SharedMemoryProtocol.AudibleCursor, shmTargetFrame);
@@ -398,9 +396,9 @@ namespace OmniMixPlayer.Backend.Audio
         {
             lock (_lock)
             {
+                if (string.IsNullOrWhiteSpace(uuid)) return;
                 var music = _musicRegistry.GetMusic(uuid);
-                if (music == null) return;
-                Active.InsertQueue(new[] { music }, Active.QueueCount);
+                Active.InsertQueue(music != null ? new[] { music } : Array.Empty<MusicInfo>(), Active.QueueCount, new[] { uuid });
                 EmitQueueChanged(QueueChangeType.Enqueued, uuid);
             }
         }
@@ -409,7 +407,7 @@ namespace OmniMixPlayer.Backend.Audio
         {
             lock (_lock)
             {
-                Active.InsertQueue(ResolveSongs(uuids), Active.QueueCount);
+                Active.InsertQueue(ResolveSongs(uuids), Active.QueueCount, uuids);
                 EmitQueueChanged(QueueChangeType.Enqueued, null);
             }
         }
@@ -418,7 +416,7 @@ namespace OmniMixPlayer.Backend.Audio
         {
             lock (_lock)
             {
-                Active.InsertQueue(ResolveSongs(uuids), index);
+                Active.InsertQueue(ResolveSongs(uuids), index, uuids);
                 EmitQueueChanged(QueueChangeType.Enqueued, null);
             }
         }
@@ -427,7 +425,7 @@ namespace OmniMixPlayer.Backend.Audio
         {
             lock (_lock)
             {
-                Active.InsertHistory(ResolveSongs(uuids), index);
+                Active.InsertHistory(ResolveSongs(uuids), index, uuids);
                 EmitQueueChanged(QueueChangeType.Enqueued, null);
             }
         }
@@ -448,7 +446,7 @@ namespace OmniMixPlayer.Backend.Audio
                 var songs = ResolveSongs(uuids);
                 Active.ReplacePlaylistSources(new[]
                 {
-                    new PlaylistSource("custom", "Custom", songs)
+                    new PlaylistSource("custom", "Custom", songs, uuids)
                 });
                 EmitQueueChanged(QueueChangeType.Cleared, null);
             }
@@ -488,7 +486,7 @@ namespace OmniMixPlayer.Backend.Audio
             lock (_lock)
             {
                 var songs = ResolveSongs(uuids);
-                Active.ReplaceQueue(songs);
+                Active.ReplaceQueue(songs, uuids);
                 EmitQueueChanged(QueueChangeType.Cleared, null);
             }
         }
@@ -582,7 +580,9 @@ namespace OmniMixPlayer.Backend.Audio
             artist = m.Artist,
             albumId = m.AlbumId,
             duration = m.Duration,
-            moduleId = m.ModuleId
+            moduleId = m.ModuleId,
+            coverUrl = m.CoverUrl ?? "",
+            imageUrl = m.CoverUrl ?? ""
         };
 
         private static int GetHistoryPosition(QueueSlot a) => -1; // internal only
@@ -1175,7 +1175,7 @@ namespace OmniMixPlayer.Backend.Audio
             if (source == null) return null;
             var id = string.IsNullOrWhiteSpace(source.id) ? Guid.NewGuid().ToString("N") : source.id.Trim();
             var name = string.IsNullOrWhiteSpace(source.name) ? id : source.name.Trim();
-            return new PlaylistSource(id, name, ResolveSongs(source.uuids));
+            return new PlaylistSource(id, name, ResolveSongs(source.uuids), source.uuids);
         }
 
         private static string SanitizeId(string name) =>

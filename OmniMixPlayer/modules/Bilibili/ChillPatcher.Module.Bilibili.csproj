@@ -8,7 +8,7 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <AssemblyName>OmniMixPlayer.Module.Bilibili</AssemblyName>
-    <OutputPath>..\..\bin\Modules\Bilibili\</OutputPath>
+    <OutputPath>..\..\bin\Backend\win-x64\modules\com.chillpatcher.bilibili\</OutputPath>
     <RootNamespace>OmniMixPlayer.Module.Bilibili</RootNamespace>
   </PropertyGroup>
 

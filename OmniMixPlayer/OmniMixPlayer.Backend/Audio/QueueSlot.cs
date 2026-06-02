@@ -25,12 +25,19 @@ namespace OmniMixPlayer.Backend.Audio
         public string Id { get; }
         public string Name { get; }
         public List<MusicInfo> Songs { get; }
+        public List<string> SongUuids { get; }
 
-        public PlaylistSource(string id, string name, IEnumerable<MusicInfo> songs)
+        public PlaylistSource(string id, string name, IEnumerable<MusicInfo> songs, IEnumerable<string> songUuids = null)
         {
             Id = id;
             Name = name;
             Songs = songs?.Where(s => s != null).ToList() ?? new List<MusicInfo>();
+            SongUuids = NormalizeUuids(songUuids).ToList();
+            foreach (var song in Songs)
+            {
+                if (!string.IsNullOrEmpty(song.UUID) && !SongUuids.Contains(song.UUID))
+                    SongUuids.Add(song.UUID);
+            }
         }
 
         public PlaylistSourceInfo ToInfo() => new()
@@ -44,8 +51,18 @@ namespace OmniMixPlayer.Backend.Audio
         {
             Id = Id,
             Name = Name,
-            SongUuids = Songs.Select(s => s.UUID).ToList()
+            SongUuids = SongUuids.Count > 0 ? SongUuids.ToList() : Songs.Select(s => s.UUID).ToList()
         };
+
+        private static IEnumerable<string> NormalizeUuids(IEnumerable<string> uuids)
+        {
+            var seen = new HashSet<string>();
+            foreach (var uuid in uuids ?? Array.Empty<string>())
+            {
+                if (!string.IsNullOrWhiteSpace(uuid) && seen.Add(uuid))
+                    yield return uuid;
+            }
+        }
     }
 
     internal class QueueSlot
@@ -54,7 +71,10 @@ namespace OmniMixPlayer.Backend.Audio
         private readonly List<MusicInfo> _playlistCache = new();
         private readonly List<MusicInfo> _queue = new();
         private readonly List<MusicInfo> _history = new();
+        private readonly List<string> _unresolvedQueueUuids = new();
+        private readonly List<string> _unresolvedHistoryUuids = new();
         private MusicInfo _currentTrack;
+        private string _unresolvedCurrentUuid;
         private int _historyPosition = -1;
         private int _playlistPosition;
         private bool _playlistDirty = true;
@@ -107,6 +127,7 @@ namespace OmniMixPlayer.Backend.Audio
         public void SetCurrentTrack(MusicInfo m)
         {
             _currentTrack = m;
+            _unresolvedCurrentUuid = null;
             _historyPosition = -1;
         }
 
@@ -115,19 +136,29 @@ namespace OmniMixPlayer.Backend.Audio
             if (idx >= 0 && idx < _queue.Count)
             {
                 _currentTrack = _queue[idx];
+                _unresolvedCurrentUuid = null;
                 _queue.RemoveAt(idx);
                 _historyPosition = -1;
             }
         }
 
-        public void InsertQueue(IEnumerable<MusicInfo> songs, int index) => InsertUnique(_queue, songs, index);
-        public void InsertHistory(IEnumerable<MusicInfo> songs, int index)
+        public void InsertQueue(IEnumerable<MusicInfo> songs, int index, IEnumerable<string> songUuids = null)
+        {
+            InsertUnique(_queue, songs, index);
+            AddUnresolvedUuids(_unresolvedQueueUuids, songUuids, _queue);
+        }
+        public void InsertHistory(IEnumerable<MusicInfo> songs, int index, IEnumerable<string> songUuids = null)
         {
             InsertUnique(_history, songs, index);
+            AddUnresolvedUuids(_unresolvedHistoryUuids, songUuids, _history);
             if (_historyPosition >= _history.Count) _historyPosition = -1;
         }
         public bool RemoveFromQueue(int idx) => RemoveAt(_queue, idx);
-        public bool RemoveFromQueue(string uuid) => RemoveByUuid(_queue, uuid);
+        public bool RemoveFromQueue(string uuid)
+        {
+            var ok = RemoveByUuid(_queue, uuid);
+            return RemoveUuid(_unresolvedQueueUuids, uuid) || ok;
+        }
         public bool RemoveFromHistory(int idx)
         {
             var ok = RemoveAt(_history, idx);
@@ -137,6 +168,7 @@ namespace OmniMixPlayer.Backend.Audio
         public bool RemoveFromHistory(string uuid)
         {
             var ok = RemoveByUuid(_history, uuid);
+            ok = RemoveUuid(_unresolvedHistoryUuids, uuid) || ok;
             if (ok && _historyPosition >= _history.Count) _historyPosition = -1;
             return ok;
         }
@@ -145,7 +177,7 @@ namespace OmniMixPlayer.Backend.Audio
             return MoveInList(_queue, f, t);
         }
         public bool MoveInHistory(int f, int t) => MoveInList(_history, f, t);
-        public void ClearQueue() { _queue.Clear(); }
+        public void ClearQueue() { _queue.Clear(); _unresolvedQueueUuids.Clear(); }
         public void ReplacePlaylistSources(IEnumerable<PlaylistSource> sources)
         {
             _playlistSources.Clear();
@@ -174,8 +206,14 @@ namespace OmniMixPlayer.Backend.Audio
         }
         public void ReplaceQueue(IEnumerable<MusicInfo> songs)
         {
+            ReplaceQueue(songs, null);
+        }
+        public void ReplaceQueue(IEnumerable<MusicInfo> songs, IEnumerable<string> songUuids)
+        {
             _queue.Clear();
+            _unresolvedQueueUuids.Clear();
             InsertUnique(_queue, songs, 0);
+            AddUnresolvedUuids(_unresolvedQueueUuids, songUuids, _queue);
         }
 
         public void MarkCurrentStarted()
@@ -190,7 +228,7 @@ namespace OmniMixPlayer.Backend.Audio
             _historyPosition = -1;
         }
 
-        public void ClearHistory() { _history.Clear(); _historyPosition = -1; }
+        public void ClearHistory() { _history.Clear(); _unresolvedHistoryUuids.Clear(); _historyPosition = -1; }
 
         public MusicInfo GoPreviousInHistory()
         {
@@ -219,12 +257,14 @@ namespace OmniMixPlayer.Backend.Audio
                 _queue.RemoveAt(0);
                 if (queued == null || queued.IsExcluded) continue;
                 _currentTrack = queued;
+                _unresolvedCurrentUuid = null;
                 return _currentTrack;
             }
 
             if (playlist == null || playlist.Count == 0)
             {
                 _currentTrack = null;
+                _unresolvedCurrentUuid = null;
                 return null;
             }
 
@@ -235,11 +275,13 @@ namespace OmniMixPlayer.Backend.Audio
                 if (candidates.Count == 0)
                 {
                     _currentTrack = null;
+                    _unresolvedCurrentUuid = null;
                     return null;
                 }
                 var pick = candidates[rng.Next(candidates.Count)];
                 _playlistPosition = (playlist.ToList().FindIndex(m => m.UUID == pick.UUID) + 1) % playlist.Count;
                 _currentTrack = pick;
+                _unresolvedCurrentUuid = null;
                 return _currentTrack;
             }
 
@@ -277,6 +319,7 @@ namespace OmniMixPlayer.Backend.Audio
             if (reachedEnd)
             {
                 _currentTrack = null;
+                _unresolvedCurrentUuid = null;
                 return null;
             }
 
@@ -313,16 +356,22 @@ namespace OmniMixPlayer.Backend.Audio
             {
                 _playlistPosition = (nextIdx + 1) % playlist.Count;
                 _currentTrack = playlist[nextIdx];
+                _unresolvedCurrentUuid = null;
                 return _currentTrack;
             }
 
             _currentTrack = null;
+            _unresolvedCurrentUuid = null;
             return null;
         }
 
         public void ImportFromPlaylist(IReadOnlyList<MusicInfo> songs, bool replace)
         {
-            if (replace) _queue.Clear();
+            if (replace)
+            {
+                _queue.Clear();
+                _unresolvedQueueUuids.Clear();
+            }
             InsertUnique(_queue, songs, _queue.Count);
         }
 
@@ -330,11 +379,11 @@ namespace OmniMixPlayer.Backend.Audio
         {
             Id = Id,
             Name = Name,
-            CurrentUuid = _currentTrack?.UUID,
+            CurrentUuid = _currentTrack?.UUID ?? _unresolvedCurrentUuid,
             PlaylistSources = _playlistSources.Select(s => s.Serialize()).ToList(),
-            SongUuids = _queue.Select(m => m.UUID).ToList(),
+            SongUuids = MergeResolvedAndUnresolved(_queue, _unresolvedQueueUuids),
             Index = -1,
-            HistoryUuids = _history.Select(m => m.UUID).ToList(),
+            HistoryUuids = MergeResolvedAndUnresolved(_history, _unresolvedHistoryUuids),
             HistoryPosition = _historyPosition,
             PlaylistPosition = _playlistPosition,
             Shuffle = Shuffle,
@@ -352,25 +401,28 @@ namespace OmniMixPlayer.Backend.Audio
             if (Enum.TryParse<RepeatMode>(data.RepeatMode, out var rm)) slot.RepeatMode = rm;
 
             if (!string.IsNullOrEmpty(data.CurrentUuid))
+            {
                 slot._currentTrack = registry.GetMusic(data.CurrentUuid);
+                if (slot._currentTrack == null) slot._unresolvedCurrentUuid = data.CurrentUuid;
+            }
             if (data.PlaylistSources != null)
             {
                 foreach (var source in data.PlaylistSources)
                 {
                     var songs = ResolveSerializedSongs(source.SongUuids, registry);
-                    slot._playlistSources.Add(new PlaylistSource(source.Id, source.Name, songs));
+                    slot._playlistSources.Add(new PlaylistSource(source.Id, source.Name, songs, source.SongUuids));
                 }
             }
             if (data.PlaylistUuids != null)
             {
                 var songs = ResolveSerializedSongs(data.PlaylistUuids, registry);
-                if (songs.Count > 0)
-                    slot._playlistSources.Add(new PlaylistSource("legacy", "Legacy", songs));
+                if (songs.Count > 0 || data.PlaylistUuids.Count > 0)
+                    slot._playlistSources.Add(new PlaylistSource("legacy", "Legacy", songs, data.PlaylistUuids));
             }
             if (data.SongUuids != null)
-                foreach (var u in data.SongUuids) { var m = registry.GetMusic(u); if (m != null) slot._queue.Add(m); }
+                foreach (var u in data.SongUuids) { var m = registry.GetMusic(u); if (m != null) slot._queue.Add(m); else AddUuid(slot._unresolvedQueueUuids, u); }
             if (data.HistoryUuids != null)
-                foreach (var u in data.HistoryUuids) { var m = registry.GetMusic(u); if (m != null) slot._history.Add(m); }
+                foreach (var u in data.HistoryUuids) { var m = registry.GetMusic(u); if (m != null) slot._history.Add(m); else AddUuid(slot._unresolvedHistoryUuids, u); }
 
             if (slot._currentTrack == null && data.Index >= 0 && data.Index < slot._queue.Count)
             {
@@ -432,6 +484,12 @@ namespace OmniMixPlayer.Backend.Audio
             return RemoveAt(target, index);
         }
 
+        private static bool RemoveUuid(List<string> target, string uuid)
+        {
+            if (string.IsNullOrEmpty(uuid)) return false;
+            return target.RemoveAll(u => u == uuid) > 0;
+        }
+
         private static bool MoveInList(List<MusicInfo> target, int from, int to)
         {
             if (from < 0 || from >= target.Count || to < 0 || to >= target.Count) return false;
@@ -450,6 +508,42 @@ namespace OmniMixPlayer.Backend.Audio
                 if (m != null) songs.Add(m);
             }
             return songs;
+        }
+
+        private static void AddUnresolvedUuids(List<string> target, IEnumerable<string> uuids, IEnumerable<MusicInfo> resolvedSongs)
+        {
+            if (uuids == null) return;
+            var resolved = new HashSet<string>((resolvedSongs ?? Array.Empty<MusicInfo>())
+                .Where(m => !string.IsNullOrEmpty(m?.UUID))
+                .Select(m => m.UUID));
+            foreach (var uuid in uuids)
+            {
+                if (string.IsNullOrWhiteSpace(uuid) || resolved.Contains(uuid)) continue;
+                AddUuid(target, uuid);
+            }
+        }
+
+        private static void AddUuid(List<string> target, string uuid)
+        {
+            if (!string.IsNullOrWhiteSpace(uuid) && !target.Contains(uuid))
+                target.Add(uuid);
+        }
+
+        private static List<string> MergeResolvedAndUnresolved(IEnumerable<MusicInfo> songs, IEnumerable<string> unresolvedUuids)
+        {
+            var result = new List<string>();
+            var seen = new HashSet<string>();
+            foreach (var song in songs ?? Array.Empty<MusicInfo>())
+            {
+                if (!string.IsNullOrEmpty(song?.UUID) && seen.Add(song.UUID))
+                    result.Add(song.UUID);
+            }
+            foreach (var uuid in unresolvedUuids ?? Array.Empty<string>())
+            {
+                if (!string.IsNullOrWhiteSpace(uuid) && seen.Add(uuid))
+                    result.Add(uuid);
+            }
+            return result;
         }
     }
 

@@ -8,7 +8,7 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <AssemblyName>OmniMixPlayer.Module.QQMusic</AssemblyName>
-    <OutputPath>..\..\bin\Modules\QQMusic\</OutputPath>
+    <OutputPath>..\..\bin\Backend\win-x64\modules\com.chillpatcher.qqmusic\</OutputPath>
     <RootNamespace>OmniMixPlayer.Module.QQMusic</RootNamespace>
   </PropertyGroup>
 
@@ -34,5 +34,11 @@
     </EmbeddedResource>
   </ItemGroup>
 
-</Project>
+
+  <ItemGroup>
+    <Content Include="native\x64\ChillQQMusic.dll" Condition="Exists('native\x64\ChillQQMusic.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>native\x64\ChillQQMusic.dll</Link>
+    </Content>
+  </ItemGroup></Project>
 

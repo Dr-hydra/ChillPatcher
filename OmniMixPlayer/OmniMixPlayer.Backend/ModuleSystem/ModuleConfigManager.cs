@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text.Json;
 using OmniMixPlayer.SDK.Interfaces;
@@ -27,8 +28,16 @@ namespace OmniMixPlayer.Backend.ModuleSystem
                 if (File.Exists(_configPath))
                 {
                     var json = File.ReadAllText(_configPath);
-                    return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)
-                        ?? new Dictionary<string, JsonElement>();
+                    using var document = JsonDocument.Parse(json);
+                    var result = new Dictionary<string, JsonElement>();
+                    if (document.RootElement.ValueKind != JsonValueKind.Object)
+                        return result;
+
+                    foreach (var property in document.RootElement.EnumerateObject())
+                    {
+                        result[property.Name] = property.Value.Clone();
+                    }
+                    return result;
                 }
             }
             catch { }
@@ -41,7 +50,21 @@ namespace OmniMixPlayer.Backend.ModuleSystem
             {
                 try
                 {
-                    return JsonSerializer.Deserialize<T>(element.GetRawText());
+                    var targetType = typeof(T);
+                    if (targetType == typeof(string))
+                        return (T)(object)(element.ValueKind == JsonValueKind.String ? element.GetString() : element.ToString());
+                    if (targetType == typeof(bool) && (element.ValueKind == JsonValueKind.True || element.ValueKind == JsonValueKind.False))
+                        return (T)(object)element.GetBoolean();
+                    if (targetType == typeof(int) && element.TryGetInt32(out var intValue))
+                        return (T)(object)intValue;
+                    if (targetType == typeof(long) && element.TryGetInt64(out var longValue))
+                        return (T)(object)longValue;
+                    if (targetType == typeof(double) && element.TryGetDouble(out var doubleValue))
+                        return (T)(object)doubleValue;
+                    if (targetType == typeof(float) && element.TryGetSingle(out var floatValue))
+                        return (T)(object)floatValue;
+                    if (targetType == typeof(JsonElement))
+                        return (T)(object)element.Clone();
                 }
                 catch { }
             }
@@ -50,8 +73,7 @@ namespace OmniMixPlayer.Backend.ModuleSystem
 
         public void SetValue<T>(string key, T value)
         {
-            var serialized = JsonSerializer.SerializeToElement(value);
-            _values[key] = serialized;
+            _values[key] = ToJsonElement(value);
         }
 
         public string GetString(string key, string defaultValue = "")
@@ -89,10 +111,48 @@ namespace OmniMixPlayer.Backend.ModuleSystem
                 var dir = Path.GetDirectoryName(_configPath);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                     Directory.CreateDirectory(dir);
-                var json = JsonSerializer.Serialize(_values, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(_configPath, json);
+
+                using var stream = File.Create(_configPath);
+                using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
+                writer.WriteStartObject();
+                foreach (var pair in _values)
+                {
+                    writer.WritePropertyName(pair.Key);
+                    pair.Value.WriteTo(writer);
+                }
+                writer.WriteEndObject();
             }
             catch { }
+        }
+
+        private static JsonElement ToJsonElement<T>(T value)
+        {
+            if (value is null)
+                return ParseElement("null");
+            if (value is JsonElement element)
+                return element.Clone();
+            if (value is bool boolValue)
+                return ParseElement(boolValue ? "true" : "false");
+            if (value is string stringValue)
+                return ParseElement($"\"{JsonEncodedText.Encode(stringValue)}\"");
+            if (value is int intValue)
+                return ParseElement(intValue.ToString(CultureInfo.InvariantCulture));
+            if (value is long longValue)
+                return ParseElement(longValue.ToString(CultureInfo.InvariantCulture));
+            if (value is double doubleValue)
+                return ParseElement(doubleValue.ToString("R", CultureInfo.InvariantCulture));
+            if (value is float floatValue)
+                return ParseElement(floatValue.ToString("R", CultureInfo.InvariantCulture));
+            if (value is decimal decimalValue)
+                return ParseElement(decimalValue.ToString(CultureInfo.InvariantCulture));
+
+            return ParseElement($"\"{JsonEncodedText.Encode(value.ToString() ?? string.Empty)}\"");
+        }
+
+        private static JsonElement ParseElement(string json)
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.Clone();
         }
     }
 }

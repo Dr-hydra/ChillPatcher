@@ -647,15 +647,12 @@ namespace OmniMixPlayer.Backend.Audio
 
                 var (modId, gameName) = GetInstanceMeta(id);
 
-                int queueCount = 0;
-                if (profile.Queues != null)
-                {
-                    foreach (var q in profile.Queues)
-                    {
-                        if (q.SongUuids != null)
-                            queueCount += q.SongUuids.Count;
-                    }
-                }
+                var activeQueue = GetActiveQueueData(profile);
+                int queueCount = activeQueue?.SongUuids?.Count ?? 0;
+                int historyCount = activeQueue?.HistoryUuids?.Count ?? 0;
+                var repeatMode = string.IsNullOrWhiteSpace(activeQueue?.RepeatMode)
+                    ? "none"
+                    : activeQueue.RepeatMode.ToLowerInvariant();
 
                 var savedMode = ReadInstanceMode(id);
 
@@ -672,18 +669,42 @@ namespace OmniMixPlayer.Backend.Audio
                     targetLatency = profile.TargetLatency,
                     queueCount,
                     queueIndex = 0,
-                    historyCount = 0,
+                    historyCount,
                     sampleRate = 0,
                     channels = 0,
-                    shuffle = false,
-                    repeatMode = "none",
-                    currentTrack = (object)null,
+                    shuffle = activeQueue?.Shuffle ?? false,
+                    repeatMode,
+                    currentTrack = MapStoredTrack(activeQueue?.CurrentUuid),
                     modId,
                     gameName
                 });
             }
 
             return result;
+        }
+
+        private static QueueSlotData GetActiveQueueData(PlaybackStateData profile)
+        {
+            if (profile?.Queues == null || profile.Queues.Count == 0) return null;
+            var activeId = profile.ActiveQueueId ?? "default";
+            return profile.Queues.FirstOrDefault(q => q.Id == activeId) ?? profile.Queues.FirstOrDefault();
+        }
+
+        private object MapStoredTrack(string uuid)
+        {
+            if (string.IsNullOrWhiteSpace(uuid)) return null;
+            var music = _musicRegistry.GetMusic(uuid);
+            return new
+            {
+                uuid,
+                title = music?.Title ?? uuid,
+                artist = music?.Artist ?? "",
+                albumId = music?.AlbumId ?? "",
+                duration = music?.Duration ?? 0,
+                moduleId = music?.ModuleId ?? "",
+                coverUrl = music?.CoverUrl ?? "",
+                imageUrl = music?.CoverUrl ?? ""
+            };
         }
 
         public object GetStats()
@@ -793,7 +814,9 @@ namespace OmniMixPlayer.Backend.Audio
                 artist = instance.Controller.CurrentTrack.Artist,
                 albumId = instance.Controller.CurrentTrack.AlbumId,
                 duration = instance.Controller.CurrentTrack.Duration,
-                moduleId = instance.Controller.CurrentTrack.ModuleId
+                moduleId = instance.Controller.CurrentTrack.ModuleId,
+                coverUrl = instance.Controller.CurrentTrack.CoverUrl ?? "",
+                imageUrl = instance.Controller.CurrentTrack.CoverUrl ?? ""
             },
             modId = "",
             gameName = ""
@@ -824,7 +847,9 @@ namespace OmniMixPlayer.Backend.Audio
                 artist = instance.Controller.CurrentTrack.Artist,
                 albumId = instance.Controller.CurrentTrack.AlbumId,
                 duration = instance.Controller.CurrentTrack.Duration,
-                moduleId = instance.Controller.CurrentTrack.ModuleId
+                moduleId = instance.Controller.CurrentTrack.ModuleId,
+                coverUrl = instance.Controller.CurrentTrack.CoverUrl ?? "",
+                imageUrl = instance.Controller.CurrentTrack.CoverUrl ?? ""
             },
             modId,
             gameName
