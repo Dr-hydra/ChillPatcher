@@ -43,7 +43,7 @@ Public Module ModBase
     ''' <summary>
     ''' 程序的启动路径，以 \ 结尾。
     ''' </summary>
-    Public PathExeFolder As String = AppDomain.CurrentDomain.SetupInformation.ApplicationBase
+    Public PathExeFolder As String = If(Environment.ProcessPath, AppDomain.CurrentDomain.SetupInformation.ApplicationBase & AppDomain.CurrentDomain.FriendlyName).BeforeLast("\") & "\"
     ''' <summary>
     ''' 包含程序名的完整路径。
     ''' </summary>
@@ -531,7 +531,7 @@ Public Module ModBase
     ''' </summary>
     ''' <param name="FileName">文件完整路径或简写文件名。简写将会使用“ApplicationName\文件名.ini”作为路径。</param>
     Public Sub IniClearCache(FileName As String)
-        If Not FileName.Contains(":\") Then FileName = $"{PathExeFolder}PCL\{FileName}.ini"
+        If Not FileName.Contains(":\") Then FileName = $"{PathExeFolder}OmniMixPlayer\{FileName}.ini"
         IniCache.Remove(FileName)
     End Sub
     ''' <summary>
@@ -542,7 +542,7 @@ Public Module ModBase
     Private Function IniGetContent(FileName As String) As ConcurrentDictionary(Of String, String)
         Try
             '还原文件路径
-            If Not FileName.Contains(":\") Then FileName = $"{PathExeFolder}PCL\{FileName}.ini"
+            If Not FileName.Contains(":\") Then FileName = $"{PathExeFolder}OmniMixPlayer\{FileName}.ini"
             '检索缓存
             Dim Cache As ConcurrentDictionary(Of String, String) = Nothing
             If IniCache.TryGetValue(FileName, Cache) Then Return Cache
@@ -616,7 +616,7 @@ Public Module ModBase
                 FileContent.Append(Pair.Value)
                 FileContent.Append(vbCrLf)
             Next
-            If Not FileName.Contains(":\") Then FileName = $"{PathExeFolder}PCL\{FileName}.ini"
+            If Not FileName.Contains(":\") Then FileName = $"{PathExeFolder}OmniMixPlayer\{FileName}.ini"
             '处理相对路径
             FileName = If(FileName.Contains(":\"), FileName, PathExeFolder & FileName)
             FileUtils.Write(FileName, FileContent.ToString)
@@ -977,14 +977,14 @@ Public Module ModBase
     ''' </summary>
     Public PathPure As String = GetPureASCIIDir()
     Private Function GetPureASCIIDir() As String
-        If (PathExeFolder & "PCL").IsAsciiOnly() Then
-            Return PathExeFolder & "PCL\"
+        If (PathExeFolder & "OmniMixPlayer").IsAsciiOnly() Then
+            Return PathExeFolder & "OmniMixPlayer\"
         ElseIf PathAppdata.IsAsciiOnly() Then
             Return PathAppdata
         ElseIf PathTemp.IsAsciiOnly() Then
             Return PathTemp
         Else
-            Return OsDrive & "ProgramData\PCL\"
+            Return OsDrive & "ProgramData\OmniMixPlayer\"
         End If
     End Function
 

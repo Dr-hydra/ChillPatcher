@@ -6,12 +6,20 @@ Public Class FormMain
 #Region "基础"
 
     Private Const IsOmniMixGui As Boolean = True
+    Public ReadOnly Property IsOmniMixUi As Boolean
+        Get
+            Return IsOmniMixGui
+        End Get
+    End Property
     Private FrmOmniMixHome As PageOmniMixRight
     Private FrmOmniMixLibrary As PageOmniMixRight
     Private FrmOmniMixModules As PageOmniMixRight
     Private FrmOmniMixSettings As PageOmniMixRight
     Private FrmOmniMixAbout As PageOmniMixRight
     Private FrmOmniMixLeft As PageOmniMixLeft
+    Private OmniMixTrayIcon As System.Windows.Forms.NotifyIcon
+    Private OmniMixTrayMenu As System.Windows.Forms.ContextMenuStrip
+    Private IsRestoringFromTray As Boolean = False
 
     '更新日志
     Private Sub ShowUpdateLog(LastVersion As Integer)
@@ -363,6 +371,7 @@ Public Class FormMain
         Left = (GetWPFSize(My.Computer.Screen.WorkingArea.Width) - Width) / 2
         IsSizeSaveable = True
         ShowWindowToTop()
+        If IsOmniMixGui Then EnsureOmniMixTrayIcon()
         Dim HwndSource As Interop.HwndSource = PresentationSource.FromVisual(Me)
         HwndSource.AddHook(New Interop.HwndSourceHook(AddressOf WndProc))
         AniStart({
@@ -557,6 +566,8 @@ Public Class FormMain
         End If
         '关闭联机？
         If FrmLinkMain?.TryExit(Not SendWarning, True) Then Return
+        If IsOmniMixGui Then StopOmniMixBackendOnExit()
+        DisposeOmniMixTrayIcon()
         '关闭
         RunInUiWait(
         Sub()
@@ -589,10 +600,41 @@ Public Class FormMain
             Logger.Info("收到关闭指令")
         End Sub)
     End Sub
+    Private Shared Sub StopOmniMixBackendOnExit()
+        Try
+            If Not Settings.Get(Of Boolean)("OmniMixCloseBackendWithGui") Then Return
+        Catch ex As Exception
+            Logger.Warn(ex, "读取 OmniMix 退出时停止后端设置失败")
+            Return
+        End Try
+
+        Try
+            Logger.Info("正在随 OmniMix GUI 退出停止后端")
+            Dim StopTask = System.Threading.Tasks.Task.Run(
+            Async Function()
+                Try
+                    Dim Status = Await OmniMixApiClient.DiscoverAsync()
+                    If Status Is Nothing OrElse Not Status.IsOnline OrElse String.IsNullOrWhiteSpace(Status.BaseUrl) Then
+                        Logger.Info("关闭 OmniMix GUI 时未发现在线后端，无需停止")
+                        Return
+                    End If
+                    Await OmniMixApiClient.StopBackendAsync(Status.BaseUrl)
+                    Logger.Info("已请求 OmniMix 后端随 GUI 退出")
+                Catch ex As Exception
+                    Logger.Warn(ex, "关闭 OmniMix GUI 时停止后端失败")
+                End Try
+            End Function)
+
+            If Not StopTask.Wait(1800) Then Logger.Warn("关闭 OmniMix GUI 时停止后端超时，继续退出")
+        Catch ex As Exception
+            Logger.Warn(ex, "关闭 OmniMix GUI 时停止后端失败")
+        End Try
+    End Sub
     Private Shared IsLogShown As Boolean = False
     Public Shared Sub EndProgramForce(Optional ReturnCode As ProcessReturnValues = ProcessReturnValues.Success)
         On Error Resume Next
         IsProgramEnding = True
+        FrmMain?.DisposeOmniMixTrayIcon()
         AniControlEnabled += 1
         If IsUpdateWaitingRestart Then UpdateRestart(False)
         If ReturnCode = ProcessReturnValues.Exception Then
@@ -640,6 +682,78 @@ Public Class FormMain
     '最小化
     Private Sub BtnTitleMin_Click() Handles BtnTitleMin.Click
         WindowState = WindowState.Minimized
+    End Sub
+
+    Private Sub FormMain_StateChanged(sender As Object, e As EventArgs) Handles Me.StateChanged
+        If Not IsOmniMixGui OrElse IsRestoringFromTray OrElse IsProgramEnding Then Return
+        If WindowState <> WindowState.Minimized Then Return
+        HideOmniMixToTray()
+    End Sub
+
+    Private Sub EnsureOmniMixTrayIcon()
+        If Not IsOmniMixGui OrElse OmniMixTrayIcon IsNot Nothing Then Return
+
+        OmniMixTrayMenu = New System.Windows.Forms.ContextMenuStrip()
+        Dim ShowItem = New System.Windows.Forms.ToolStripMenuItem("显示主窗口")
+        AddHandler ShowItem.Click, Sub() ShowOmniMixFromTray()
+        Dim ExitItem = New System.Windows.Forms.ToolStripMenuItem("退出 OmniMix")
+        AddHandler ExitItem.Click, Sub() EndProgram(True)
+        OmniMixTrayMenu.Items.Add(ShowItem)
+        OmniMixTrayMenu.Items.Add(New System.Windows.Forms.ToolStripSeparator())
+        OmniMixTrayMenu.Items.Add(ExitItem)
+
+        OmniMixTrayIcon = New System.Windows.Forms.NotifyIcon With {
+            .Text = "OmniMix Player",
+            .Icon = LoadOmniMixTrayIcon(),
+            .ContextMenuStrip = OmniMixTrayMenu,
+            .Visible = True
+        }
+        AddHandler OmniMixTrayIcon.DoubleClick, Sub() ShowOmniMixFromTray()
+    End Sub
+
+    Private Shared Function LoadOmniMixTrayIcon() As System.Drawing.Icon
+        Try
+            Dim ResourceInfo = System.Windows.Application.GetResourceStream(New Uri("pack://application:,,,/Images/icon.ico", UriKind.Absolute))
+            If ResourceInfo IsNot Nothing AndAlso ResourceInfo.Stream IsNot Nothing Then
+                Using ResourceStream = ResourceInfo.Stream
+                    Using ResourceIcon As New System.Drawing.Icon(ResourceStream)
+                        Return DirectCast(ResourceIcon.Clone(), System.Drawing.Icon)
+                    End Using
+                End Using
+            End If
+        Catch ex As Exception
+            Logger.Warn(ex, "读取 OmniMix 托盘图标资源失败")
+        End Try
+        Return System.Drawing.SystemIcons.Application
+    End Function
+
+    Private Sub HideOmniMixToTray()
+        EnsureOmniMixTrayIcon()
+        WindowState = WindowState.Minimized
+        Hidden = True
+        Logger.Info("OmniMix GUI 已最小化到托盘")
+    End Sub
+
+    Private Sub ShowOmniMixFromTray()
+        RunInUi(
+        Sub()
+            IsRestoringFromTray = True
+            Hidden = False
+            ShowWindowToTop()
+            IsRestoringFromTray = False
+        End Sub)
+    End Sub
+
+    Private Sub DisposeOmniMixTrayIcon()
+        If OmniMixTrayIcon IsNot Nothing Then
+            OmniMixTrayIcon.Visible = False
+            OmniMixTrayIcon.Dispose()
+            OmniMixTrayIcon = Nothing
+        End If
+        If OmniMixTrayMenu IsNot Nothing Then
+            OmniMixTrayMenu.Dispose()
+            OmniMixTrayMenu = Nothing
+        End If
     End Sub
 
     '背景图片与标题栏
@@ -767,7 +881,7 @@ Public Class FormMain
                     FrmSetupUI.PanLogoChange.Visibility = Visibility.Visible
                 End If
                 Try
-                    ImageTitleLogo.Source = PathExeFolder & "PCL\Logo.png"
+                    ImageTitleLogo.Source = PathExeFolder & "OmniMixPlayer\Logo.png"
                 Catch ex As Exception
                     ImageTitleLogo.Source = Nothing
                     Logger.Error(ex, "显示标题栏图片失败", LogBehavior.Alert)
@@ -1036,12 +1150,12 @@ Public Class FormMain
             Dim Extension As String = FilePath.AfterLast(".").Lower
             If Extension = "xaml" Then
                 Logger.Info("文件后缀为 XAML，作为主页加载")
-                If FileUtils.Exists(PathExeFolder & "PCL\Custom.xaml") Then
+                If FileUtils.Exists(PathExeFolder & "OmniMixPlayer\Custom.xaml") Then
                     If MyMsgBox("已存在一个主页文件，是否要将它覆盖？", "覆盖确认", "覆盖", "取消") = 2 Then
                         Return
                     End If
                 End If
-                FileUtils.Copy(FilePath, PathExeFolder & "PCL\Custom.xaml")
+                FileUtils.Copy(FilePath, PathExeFolder & "OmniMixPlayer\Custom.xaml")
                 RunInUi(
                 Sub()
                     Settings.Set("UiCustomType", 1)
@@ -1440,6 +1554,7 @@ Public Class FormMain
             PageLast = PageCurrent
             PageCurrent = Stack
             If IsOmniMixGui Then
+                PrepareOmniMixPagesForSwitch(Stack.Page)
                 ConfigureOmniMixLeft(Stack.Page)
                 Select Case Stack.Page
                     Case PageType.Launch
@@ -1503,6 +1618,9 @@ Public Class FormMain
         Finally
             AniControlEnabled -= 1
         End Try
+    End Sub
+    Private Sub PrepareOmniMixPagesForSwitch(TargetPage As PageType)
+        FrmOmniMixModules?.PrepareForOmniMixPageSwitch(TargetPage)
     End Sub
     Private Sub PageChangeAnimOmniMix(TargetRight As FrameworkElement)
         AniStop("FrmMain LeftChange")

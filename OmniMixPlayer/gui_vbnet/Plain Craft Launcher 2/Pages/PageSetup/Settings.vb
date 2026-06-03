@@ -152,6 +152,7 @@
         New Setting("UiMusicRandom", True),
         New Setting("UiMusicAuto", True),
         New Setting("OmniMixBackendPath", ""),
+        New Setting("OmniMixCloseBackendWithGui", True),
         New Setting("UiHiddenPageDownload", False, OnChanged:=AddressOf PageSetupUI.HiddenRefresh),
         New Setting("UiHiddenPageLink", False, OnChanged:=AddressOf PageSetupUI.HiddenRefresh),
         New Setting("UiHiddenPageSetup", False, OnChanged:=AddressOf PageSetupUI.HiddenRefresh),

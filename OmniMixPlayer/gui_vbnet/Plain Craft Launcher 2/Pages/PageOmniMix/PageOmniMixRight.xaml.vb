@@ -1,5 +1,7 @@
 Imports System.Globalization
 Imports System.Text.Json
+Imports System.Windows.Media
+Imports System.Windows.Shapes
 
 Public Class PageOmniMixRight
 
@@ -10,6 +12,8 @@ Public Class PageOmniMixRight
     Private CurrentModuleId As String = ""
     Private CurrentUiKind As String = "default"
     Private CurrentLinkId As String = ""
+    Private CurrentDetailKind As String = ""
+    Private CurrentGameDetailId As String = ""
     Private ActiveInstanceId As String = ""
     Private CanControlActiveInstance As Boolean = False
     Private IsShowingHistory As Boolean = False
@@ -18,6 +22,8 @@ Public Class PageOmniMixRight
     Private PreviousModulesPaneForDetail As String = "launchpad"
     Private CurrentLibraryPane As String = ""
     Private CurrentLibraryPlaylist As OmniMixPlaylistData = New OmniMixPlaylistData()
+    Private CurrentLibraryTagSongs As Dictionary(Of String, List(Of OmniMixSongInfo)) = New Dictionary(Of String, List(Of OmniMixSongInfo))(StringComparer.OrdinalIgnoreCase)
+    Private IsRefreshingLibraryCache As Boolean = False
     Private CurrentModules As List(Of OmniMixModuleInfo) = New List(Of OmniMixModuleInfo)
     Private ExpandedModuleKey As String = ""
     Private ExpandedModuleTree As OmniMixRawNodeData = Nothing
@@ -29,6 +35,9 @@ Public Class PageOmniMixRight
     Private CurrentEqualizerInstanceId As String = ""
     Private CurrentEqualizerState As OmniMixEqualizerStateInfo = Nothing
     Private CurrentEqualizerPresets As Dictionary(Of String, OmniMixEqualizerStateInfo) = New Dictionary(Of String, OmniMixEqualizerStateInfo)
+    Private EqualizerSelectedPointId As String = ""
+    Private IsDraggingEqualizerPoint As Boolean = False
+    Private IsEqualizerDragChanged As Boolean = False
     Private DeploymentLogs As List(Of String) = New List(Of String)
     Private ReadOnly WsClient As New OmniMixWsClient()
     Private ReadOnly ExpandedLibraryAlbums As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
@@ -41,6 +50,10 @@ Public Class PageOmniMixRight
     Private Const IconPlus As String = "M448 128h128v320h320v128H576v320H448V576H128V448h320z"
     Private Const IconExpandDown As String = "M192 352h640L512 704z"
     Private Const IconExpandUp As String = "M192 672h640L512 320z"
+    Private Const EqualizerPlotLeft As Double = 46
+    Private Const EqualizerPlotRight As Double = 18
+    Private Const EqualizerPlotTop As Double = 18
+    Private Const EqualizerPlotBottom As Double = 28
 
     Private Class LibraryQueueGroupPayload
         Public Property GroupId As String = ""
@@ -89,8 +102,8 @@ Public Class PageOmniMixRight
                 LabStatus.Text = "下一步按 Flutter 设置页继续移植具体配置项。"
             Case "About"
                 LabTitle.Text = "关于"
-                LabSubtitle.Text = "展示 OmniMix Player、模块 SDK、PCL UI 框架来源与开源声明。"
-                LabStatus.Text = "OmniMix Player 是音乐源聚合桌面端；PCL 仅作为 UI 框架与视觉风格来源。"
+                LabSubtitle.Text = "了解 OmniMix Player 的桌面端功能、模块能力和运行方式。"
+                LabStatus.Text = "OmniMix Player 用于连接本机后端、聚合音乐来源，并把播放状态与音频流提供给游戏集成实例。"
             Case Else
                 LabTitle.Text = "OmniMix"
                 LabSubtitle.Text = "未知页面。"
@@ -99,7 +112,7 @@ Public Class PageOmniMixRight
         InitialStatusText = LabStatus.Text
     End Sub
 
-    Public Sub SetLibraryPane(Pane As String)
+    Public Async Sub SetLibraryPane(Pane As String)
         CurrentLibraryPane = If(Pane, "")
         If PageKey <> "Library" Then Return
 
@@ -108,7 +121,12 @@ Public Class PageOmniMixRight
         PanPlaylistSources.Visibility = Visibility.Collapsed
         PanLibraryList.Visibility = Visibility.Visible
         LabLibrarySummary.Visibility = Visibility.Visible
-        RenderLibrary()
+
+        If Not String.IsNullOrWhiteSpace(CurrentBaseUrl) AndAlso Not IsRefreshingLibraryCache Then
+            Await RefreshLibraryCacheAsync(CurrentBaseUrl)
+        Else
+            RenderLibrary()
+        End If
     End Sub
 
     Public Sub SetModulesPane(ShowGameIntegration As Boolean)
@@ -135,6 +153,25 @@ Public Class PageOmniMixRight
         Else
             Await RefreshModulesAsync(CurrentBaseUrl)
         End If
+    End Sub
+
+    Public Sub PrepareForOmniMixPageSwitch(TargetPage As FormMain.PageType)
+        If PageKey <> "Modules" OrElse TargetPage = FormMain.PageType.Link Then Return
+
+        ModuleUiRequestSerial += 1
+        If CardModuleUi.Visibility = Visibility.Visible Then CollapseModuleUi(False)
+        CardModuleUi.Visibility = Visibility.Collapsed
+        CardModules.Visibility = Visibility.Collapsed
+        PanModuleUi.Children.Clear()
+        CurrentModuleId = ""
+        CurrentUiKind = "default"
+        CurrentLinkId = ""
+        CurrentDetailKind = ""
+        CurrentGameDetailId = ""
+        ExpandedModuleKey = ""
+        ExpandedModuleTree = Nothing
+        ExpandedModuleError = ""
+        ExpandedModuleLoading = False
     End Sub
 
     Public Async Sub SetSettingsPane(Pane As String)
@@ -187,6 +224,9 @@ Public Class PageOmniMixRight
     Private Async Sub PageOmniMixRight_Loaded(sender As Object, e As RoutedEventArgs) Handles Me.Loaded
         BtnBackendPathBrowse.Logo = Logo.IconButtonOpen
         BtnBackendPathReset.Logo = Logo.IconButtonRefresh
+        CheckCloseBackendWithGui.Checked = Settings.Get(Of Boolean)("OmniMixCloseBackendWithGui")
+        RemoveHandler CheckCloseBackendWithGui.Change, AddressOf CheckCloseBackendWithGui_Change
+        AddHandler CheckCloseBackendWithGui.Change, AddressOf CheckCloseBackendWithGui_Change
         RemoveHandler PlaybackAutoRefreshTimer.Tick, AddressOf PlaybackAutoRefreshTimer_Tick
         AddHandler PlaybackAutoRefreshTimer.Tick, AddressOf PlaybackAutoRefreshTimer_Tick
         RemoveHandler WsClient.MessageReceived, AddressOf WsClient_MessageReceived
@@ -197,6 +237,10 @@ Public Class PageOmniMixRight
         End If
         HasCheckedBackend = True
         Await RefreshBackendStatusAsync()
+    End Sub
+
+    Private Sub CheckCloseBackendWithGui_Change(sender As Object, user As Boolean)
+        If user Then Settings.Set("OmniMixCloseBackendWithGui", CheckCloseBackendWithGui.Checked)
     End Sub
 
     Private Sub PageOmniMixRight_Unloaded(sender As Object, e As RoutedEventArgs) Handles Me.Unloaded
@@ -258,6 +302,7 @@ Public Class PageOmniMixRight
                 If(Status.StartedBackend, "启动方式：GUI 已自动启动后端", "启动方式：发现已有后端")
             CurrentBaseUrl = Status.BaseUrl
             FrmMain?.SetOmniMixConnectionStatus(True, Status.BaseUrl)
+            Await SyncGameIntegrationBindingsAsync(Status.BaseUrl)
             If PageKey = "Home" Then Await RefreshPlaybackAsync(Status.BaseUrl)
             If PageKey = "Library" Then Await RefreshLibraryAsync(Status.BaseUrl)
             If PageKey = "Modules" Then Await RefreshModulesAsync(Status.BaseUrl)
@@ -361,7 +406,7 @@ Public Class PageOmniMixRight
             PanSettingsInstances.Children.Add(New MyListItem With {
                 .Title = "暂无播放实例",
                 .Info = "后端在线，但还没有音频实例连接。",
-                .Height = 42,
+                .Height = 50,
                 .PaddingLeft = 8,
                 .Margin = New Thickness(0, 0, 0, 2),
                 .IsScaleAnimationEnabled = False,
@@ -538,7 +583,7 @@ Public Class PageOmniMixRight
                 LabSettingsSummary.Text = "后端程序不存在：" & BackendPath
                 Return
             End If
-            If Not String.Equals(Path.GetFileName(BackendPath), "OmniMixPlayer.Backend.exe", StringComparison.OrdinalIgnoreCase) Then
+            If Not String.Equals(System.IO.Path.GetFileName(BackendPath), "OmniMixPlayer.Backend.exe", StringComparison.OrdinalIgnoreCase) Then
                 LabSettingsSummary.Text = "请选择 OmniMixPlayer.Backend.exe。"
                 Return
             End If
@@ -575,10 +620,10 @@ Public Class PageOmniMixRight
             Dim CurrentPath = TxtBackendPath.Text.Trim()
             If File.Exists(CurrentPath) Then
                 Dialog.FileName = CurrentPath
-                Dialog.InitialDirectory = Path.GetDirectoryName(CurrentPath)
+                Dialog.InitialDirectory = System.IO.Path.GetDirectoryName(CurrentPath)
             Else
                 Dim DefaultPath = OmniMixBackendManager.FindDefaultBackendExe()
-                If File.Exists(DefaultPath) Then Dialog.InitialDirectory = Path.GetDirectoryName(DefaultPath)
+                If File.Exists(DefaultPath) Then Dialog.InitialDirectory = System.IO.Path.GetDirectoryName(DefaultPath)
             End If
             If Dialog.ShowDialog() <> System.Windows.Forms.DialogResult.OK Then Return
             TxtBackendPath.Text = Dialog.FileName
@@ -743,6 +788,7 @@ Public Class PageOmniMixRight
             If Status.IsOnline Then
                 CurrentBaseUrl = Status.BaseUrl
                 FrmMain?.SetOmniMixConnectionStatus(True, Status.BaseUrl)
+                Await SyncGameIntegrationBindingsAsync(Status.BaseUrl)
                 LabStatus.Text = InitialStatusText & vbCrLf & vbCrLf &
                     "后端状态：在线" & vbCrLf &
                     "连接地址：" & Status.BaseUrl & vbCrLf &
@@ -965,12 +1011,17 @@ Public Class PageOmniMixRight
                 CurrentEqualizerState = Nothing
                 CurrentEqualizerPresets.Clear()
                 LabEqualizerSummary.Text = "均衡器：暂无播放实例。等待游戏或音频端连接后可编辑。"
+                LabEqualizerGraphStatus.Text = "暂无可编辑实例"
+                LabEqualizerEnabled.Text = "-"
+                LabEqualizerGain.Text = "-"
+                LabEqualizerSoftClip.Text = "-"
+                CanvasEqualizerGraph.Children.Clear()
                 PanEqualizerPoints.Children.Add(New MyListItem With {
                     .Title = "暂无可编辑实例",
                     .Info = "后端在线，但还没有播放实例可用于读取均衡器。",
-                    .Height = 42,
+                    .Height = 50,
                     .PaddingLeft = 8,
-                    .Margin = New Thickness(0, 0, 0, 2),
+                    .Margin = New Thickness(0, 0, 0, 4),
                     .IsScaleAnimationEnabled = False,
                     .Type = MyListItem.CheckType.Clickable
                 })
@@ -1002,13 +1053,21 @@ Public Class PageOmniMixRight
         BtnEqualizerToggle.Text = If(State.Enabled, "禁用均衡器", "启用均衡器")
         BtnEqualizerSoftClip.Text = If(State.SoftClipEnabled, "关闭软削波", "开启软削波")
         LabEqualizerSummary.Text = $"实例 {NonEmpty(Instance.Id, Instance.ClientId)} · {BuildEqualizerStateInfo(State)}"
+        LabEqualizerGraphStatus.Text = NonEmpty(Instance.GameName, NonEmpty(Instance.Id, Instance.ClientId)) & " · " & State.Points.Count & " 个控制点"
+        LabEqualizerEnabled.Text = If(State.Enabled, "已启用", "未启用")
+        LabEqualizerGain.Text = FormatDb(State.GlobalGainDb)
+        LabEqualizerSoftClip.Text = If(State.SoftClipEnabled, "开启", "关闭")
+        If Not State.Points.Any(Function(Item) String.Equals(Item.Id, EqualizerSelectedPointId, StringComparison.OrdinalIgnoreCase)) Then
+            EqualizerSelectedPointId = If(State.Points.Count = 0, "", State.Points.OrderBy(Function(Item) Item.Frequency).First().Id)
+        End If
+        RenderEqualizerGraph(State)
 
         PanEqualizerPresets.Children.Clear()
         If Presets.Count = 0 Then
             PanEqualizerPresets.Children.Add(New MyListItem With {
                 .Title = "暂无预设",
                 .Info = "后端暂未返回均衡器预设。",
-                .Height = 42,
+                .Height = 50,
                 .PaddingLeft = 8,
                 .Margin = New Thickness(0, 0, 0, 2),
                 .IsScaleAnimationEnabled = False,
@@ -1019,9 +1078,9 @@ Public Class PageOmniMixRight
                 Dim Item As New MyListItem With {
                     .Title = Preset.Key,
                     .Info = BuildEqualizerStateInfo(Preset.Value),
-                    .Height = 42,
+                    .Height = 52,
                     .PaddingLeft = 8,
-                    .Margin = New Thickness(0, 0, 0, 2),
+                    .Margin = New Thickness(0, 0, 0, 4),
                     .IsScaleAnimationEnabled = False,
                     .Type = MyListItem.CheckType.Clickable,
                     .Tag = Preset
@@ -1043,9 +1102,9 @@ Public Class PageOmniMixRight
             PanEqualizerPoints.Children.Add(New MyListItem With {
                 .Title = "暂无控制点",
                 .Info = "当前为平直响应，可添加控制点或应用预设。",
-                .Height = 42,
+                .Height = 56,
                 .PaddingLeft = 8,
-                .Margin = New Thickness(0, 0, 0, 2),
+                .Margin = New Thickness(0, 0, 0, 4),
                 .IsScaleAnimationEnabled = False,
                 .Type = MyListItem.CheckType.Clickable
             })
@@ -1056,9 +1115,9 @@ Public Class PageOmniMixRight
             Dim Item As New MyListItem With {
                 .Title = GetEqualizerTypeLabel(Point.Type) & " · " & FormatFrequency(Point.Frequency),
                 .Info = $"{FormatDb(Point.GainDb)} · Q {Point.Q.ToString("0.##", CultureInfo.InvariantCulture)} · {Point.Id}",
-                .Height = 42,
+                .Height = 56,
                 .PaddingLeft = 8,
-                .Margin = New Thickness(0, 0, 0, 2),
+                .Margin = New Thickness(0, 0, 0, 4),
                 .IsScaleAnimationEnabled = False,
                 .Type = MyListItem.CheckType.Clickable,
                 .Tag = Point
@@ -1066,7 +1125,7 @@ Public Class PageOmniMixRight
 
             Dim EditButton As New MyIconButton With {
                 .Logo = Logo.IconButtonEdit,
-                .LogoScale = 0.95,
+                .LogoScale = 1.0,
                 .ToolTip = "编辑控制点",
                 .Tag = Point
             }
@@ -1074,7 +1133,7 @@ Public Class PageOmniMixRight
 
             Dim DeleteButton As New MyIconButton With {
                 .Logo = Logo.IconButtonDelete,
-                .LogoScale = 0.95,
+                .LogoScale = 1.0,
                 .ToolTip = "删除控制点",
                 .Tag = Point
             }
@@ -1084,6 +1143,355 @@ Public Class PageOmniMixRight
             PanEqualizerPoints.Children.Add(Item)
         Next
     End Sub
+
+    Private Sub RenderEqualizerGraph(State As OmniMixEqualizerStateInfo)
+        If CanvasEqualizerGraph Is Nothing Then Return
+        State = NormalizeEqualizerState(State)
+
+        Dim Width = CanvasEqualizerGraph.ActualWidth
+        Dim Height = CanvasEqualizerGraph.ActualHeight
+        If Width < 80 OrElse Height < 80 Then
+            CanvasEqualizerGraph.Dispatcher.BeginInvoke(Sub() RenderEqualizerGraph(State), System.Windows.Threading.DispatcherPriority.Background)
+            Return
+        End If
+
+        CanvasEqualizerGraph.Children.Clear()
+
+        Dim GridBrush = GraphBrush("ColorBrushGray5", Colors.Gray, 0.38)
+        Dim TextBrush = GraphBrush("ColorBrushGray3", Colors.Gray, 0.85)
+        Dim BaseBrush = GraphBrush("ColorBrushGray3", Colors.Gray, 0.7)
+        Dim CurveBrush = GraphBrush("ColorBrush3", Colors.DeepSkyBlue, If(State.Enabled, 1, 0.42))
+        Dim FillBrush = GraphBrush("ColorBrush3", Colors.DeepSkyBlue, If(State.Enabled, 0.15, 0.06))
+        Dim PointBrush = GraphBrush("ColorBrush2", Colors.DeepSkyBlue, If(State.Enabled, 1, 0.5))
+        Dim SelectedBrush = GraphBrush("ColorBrush3", Colors.DeepSkyBlue, 1)
+
+        Dim Frequencies = New Integer() {20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000}
+        For Each Frequency In Frequencies
+            Dim X = EqualizerFrequencyToX(Frequency, Width)
+            AddGraphLine(X, EqualizerPlotTop, X, Height - EqualizerPlotBottom, GridBrush, 1)
+            AddGraphText(If(Frequency >= 1000, (Frequency \ 1000).ToString() & "k", Frequency.ToString()), X + 3, Height - 20, TextBrush, 10)
+        Next
+
+        Dim Gains = New Integer() {-24, -18, -12, -6, 0, 6, 12, 18, 24}
+        For Each Gain In Gains
+            Dim Y = EqualizerGainToY(Gain, Height)
+            AddGraphLine(EqualizerPlotLeft, Y, Width - EqualizerPlotRight, Y, If(Gain = 0, BaseBrush, GridBrush), If(Gain = 0, 1.6, 1))
+            AddGraphText(If(Gain > 0, "+", "") & Gain.ToString() & " dB", 6, Y - 8, TextBrush, 10)
+        Next
+
+        Dim Filters = State.Points.Select(Function(PointInfo) New EqualizerBiquad(PointInfo.Frequency, PointInfo.GainDb, PointInfo.Q, PointInfo.Type, 48000)).ToList()
+        Dim CurvePoints As New PointCollection()
+        Dim FillPoints As New PointCollection()
+        Dim BaseY = EqualizerGainToY(0, Height)
+        FillPoints.Add(New Point(EqualizerPlotLeft, BaseY))
+
+        For i = 0 To 199
+            Dim T = i / 199.0
+            Dim Frequency = Math.Exp(Math.Log(20) + T * (Math.Log(20000) - Math.Log(20)))
+            Dim TotalGain = State.GlobalGainDb
+            For Each EqFilter In Filters
+                TotalGain += EqFilter.GetMagnitudeDb(Frequency, 48000)
+            Next
+            TotalGain = Clamp(TotalGain, -24, 24)
+            Dim X = EqualizerFrequencyToX(Frequency, Width)
+            Dim Y = EqualizerGainToY(TotalGain, Height)
+            CurvePoints.Add(New Point(X, Y))
+            FillPoints.Add(New Point(X, Y))
+        Next
+
+        FillPoints.Add(New Point(Width - EqualizerPlotRight, BaseY))
+        CanvasEqualizerGraph.Children.Add(New Polygon With {
+            .Points = FillPoints,
+            .Fill = FillBrush,
+            .IsHitTestVisible = False
+        })
+        CanvasEqualizerGraph.Children.Add(New Polyline With {
+            .Points = CurvePoints,
+            .Stroke = CurveBrush,
+            .StrokeThickness = 2.6,
+            .StrokeLineJoin = PenLineJoin.Round,
+            .IsHitTestVisible = False
+        })
+
+        If Math.Abs(State.GlobalGainDb) > 0.05 Then
+            Dim GainY = EqualizerGainToY(State.GlobalGainDb, Height)
+            AddGraphLine(EqualizerPlotLeft, GainY, Width - EqualizerPlotRight, GainY, GraphBrush("ColorBrush2", Colors.DeepSkyBlue, 0.55), 1.2)
+            AddGraphText("Pre " & FormatDb(State.GlobalGainDb), Width - 72, GainY - 16, TextBrush, 10)
+        End If
+
+        For Each PointInfo In State.Points.OrderBy(Function(Item) Item.Frequency)
+            Dim X = EqualizerFrequencyToX(PointInfo.Frequency, Width)
+            Dim Y = EqualizerGainToY(If(IsPassEqualizerType(PointInfo.Type), 0, PointInfo.GainDb), Height)
+            Dim Selected = String.Equals(PointInfo.Id, EqualizerSelectedPointId, StringComparison.OrdinalIgnoreCase)
+            Dim Radius = If(Selected, 8.5, 6.5)
+            If Selected Then
+                Dim Halo As New Ellipse With {
+                    .Width = 28,
+                    .Height = 28,
+                    .Fill = GraphBrush("ColorBrush3", Colors.DeepSkyBlue, 0.18),
+                    .IsHitTestVisible = False
+                }
+                Canvas.SetLeft(Halo, X - 14)
+                Canvas.SetTop(Halo, Y - 14)
+                CanvasEqualizerGraph.Children.Add(Halo)
+            End If
+
+            Dim Dot As New Ellipse With {
+                .Width = Radius * 2,
+                .Height = Radius * 2,
+                .Fill = If(Selected, SelectedBrush, PointBrush),
+                .Stroke = GraphBrush("ColorBrushBackground", Colors.White, 0.96),
+                .StrokeThickness = 2,
+                .Tag = PointInfo,
+                .Cursor = Cursors.Hand
+            }
+            Canvas.SetLeft(Dot, X - Radius)
+            Canvas.SetTop(Dot, Y - Radius)
+            AddHandler Dot.MouseLeftButtonDown, AddressOf EqualizerPointDot_MouseLeftButtonDown
+            CanvasEqualizerGraph.Children.Add(Dot)
+
+            AddGraphText(FormatFrequency(PointInfo.Frequency), X - 18, Y - 24, TextBrush, 10)
+        Next
+    End Sub
+
+    Private Sub AddGraphLine(X1 As Double, Y1 As Double, X2 As Double, Y2 As Double, Brush As Brush, Thickness As Double)
+        CanvasEqualizerGraph.Children.Add(New Line With {
+            .X1 = X1,
+            .Y1 = Y1,
+            .X2 = X2,
+            .Y2 = Y2,
+            .Stroke = Brush,
+            .StrokeThickness = Thickness,
+            .SnapsToDevicePixels = True,
+            .IsHitTestVisible = False
+        })
+    End Sub
+
+    Private Sub AddGraphText(Text As String, X As Double, Y As Double, Brush As Brush, Size As Double)
+        Dim Label As New TextBlock With {
+            .Text = Text,
+            .FontSize = Size,
+            .Foreground = Brush,
+            .IsHitTestVisible = False
+        }
+        Canvas.SetLeft(Label, X)
+        Canvas.SetTop(Label, Y)
+        CanvasEqualizerGraph.Children.Add(Label)
+    End Sub
+
+    Private Function GraphBrush(Key As String, Fallback As Color, Optional Opacity As Double = 1) As Brush
+        Dim Found = TryCast(TryFindResource(Key), Brush)
+        Dim Result = If(Found Is Nothing, New SolidColorBrush(Fallback), Found.Clone())
+        Result.Opacity *= Opacity
+        Return Result
+    End Function
+
+    Private Shared Function EqualizerFrequencyToX(Frequency As Double, Width As Double) As Double
+        Frequency = Clamp(Frequency, 20, 20000)
+        Dim PlotWidth = Math.Max(1, Width - EqualizerPlotLeft - EqualizerPlotRight)
+        Dim T = (Math.Log(Frequency) - Math.Log(20)) / (Math.Log(20000) - Math.Log(20))
+        Return EqualizerPlotLeft + T * PlotWidth
+    End Function
+
+    Private Shared Function EqualizerXToFrequency(X As Double, Width As Double) As Double
+        Dim PlotWidth = Math.Max(1, Width - EqualizerPlotLeft - EqualizerPlotRight)
+        Dim T = Clamp((X - EqualizerPlotLeft) / PlotWidth, 0, 1)
+        Return Math.Exp(Math.Log(20) + T * (Math.Log(20000) - Math.Log(20)))
+    End Function
+
+    Private Shared Function EqualizerGainToY(GainDb As Double, Height As Double) As Double
+        Dim PlotHeight = Math.Max(1, Height - EqualizerPlotTop - EqualizerPlotBottom)
+        Dim T = (Clamp(GainDb, -24, 24) + 24) / 48
+        Return EqualizerPlotTop + (1 - T) * PlotHeight
+    End Function
+
+    Private Shared Function EqualizerYToGain(Y As Double, Height As Double) As Double
+        Dim PlotHeight = Math.Max(1, Height - EqualizerPlotTop - EqualizerPlotBottom)
+        Dim T = Clamp(1 - ((Y - EqualizerPlotTop) / PlotHeight), 0, 1)
+        Return -24 + T * 48
+    End Function
+
+    Private Shared Function IsPassEqualizerType(TypeValue As String) As Boolean
+        Dim Normalized = NormalizeEqualizerType(TypeValue)
+        Return Normalized = "LowPass" OrElse Normalized = "HighPass"
+    End Function
+
+    Private Sub CanvasEqualizerGraph_SizeChanged(sender As Object, e As SizeChangedEventArgs) Handles CanvasEqualizerGraph.SizeChanged
+        If CurrentEqualizerState IsNot Nothing Then RenderEqualizerGraph(CurrentEqualizerState)
+    End Sub
+
+    Private Async Sub CanvasEqualizerGraph_MouseLeftButtonDown(sender As Object, e As MouseButtonEventArgs) Handles CanvasEqualizerGraph.MouseLeftButtonDown
+        If CurrentEqualizerState Is Nothing Then Return
+
+        Dim Position = e.GetPosition(CanvasEqualizerGraph)
+        If e.ClickCount >= 2 Then
+            Dim State = CloneEqualizerState(CurrentEqualizerState)
+            Dim TypeValue = "Peaking"
+            Dim NewPoint As New OmniMixEqualizerPointInfo With {
+                .Id = "vb_" & Guid.NewGuid().ToString("N"),
+                .Frequency = EqualizerXToFrequency(Position.X, CanvasEqualizerGraph.ActualWidth),
+                .GainDb = EqualizerYToGain(Position.Y, CanvasEqualizerGraph.ActualHeight),
+                .Q = 1,
+                .Type = TypeValue
+            }
+            State.Points.Add(NewPoint)
+            EqualizerSelectedPointId = NewPoint.Id
+            Await SaveEqualizerStateAsync(State, "已添加控制点。")
+            e.Handled = True
+            Return
+        End If
+
+        Dim Hit = FindEqualizerPointAt(Position)
+        EqualizerSelectedPointId = If(Hit Is Nothing, "", Hit.Id)
+        IsDraggingEqualizerPoint = Hit IsNot Nothing
+        IsEqualizerDragChanged = False
+        If IsDraggingEqualizerPoint Then CanvasEqualizerGraph.CaptureMouse()
+        RenderEqualizerGraph(CurrentEqualizerState)
+        e.Handled = True
+    End Sub
+
+    Private Sub EqualizerPointDot_MouseLeftButtonDown(sender As Object, e As MouseButtonEventArgs)
+        Dim PointInfo = TryCast(CType(sender, FrameworkElement).Tag, OmniMixEqualizerPointInfo)
+        If PointInfo Is Nothing Then Return
+        EqualizerSelectedPointId = PointInfo.Id
+        IsDraggingEqualizerPoint = True
+        IsEqualizerDragChanged = False
+        CanvasEqualizerGraph.CaptureMouse()
+        RenderEqualizerGraph(CurrentEqualizerState)
+        e.Handled = True
+    End Sub
+
+    Private Sub CanvasEqualizerGraph_MouseMove(sender As Object, e As MouseEventArgs) Handles CanvasEqualizerGraph.MouseMove
+        If Not IsDraggingEqualizerPoint OrElse CurrentEqualizerState Is Nothing Then Return
+        If e.LeftButton <> MouseButtonState.Pressed Then
+            IsDraggingEqualizerPoint = False
+            CanvasEqualizerGraph.ReleaseMouseCapture()
+            Return
+        End If
+
+        Dim Target = CurrentEqualizerState.Points.FirstOrDefault(Function(Item) String.Equals(Item.Id, EqualizerSelectedPointId, StringComparison.OrdinalIgnoreCase))
+        If Target Is Nothing Then Return
+
+        Dim Position = e.GetPosition(CanvasEqualizerGraph)
+        Target.Frequency = EqualizerXToFrequency(Position.X, CanvasEqualizerGraph.ActualWidth)
+        If Not IsPassEqualizerType(Target.Type) Then Target.GainDb = EqualizerYToGain(Position.Y, CanvasEqualizerGraph.ActualHeight)
+        IsEqualizerDragChanged = True
+        LabEqualizerGraphStatus.Text = $"{GetEqualizerTypeLabel(Target.Type)} · {FormatFrequency(Target.Frequency)} · {FormatDb(Target.GainDb)} · Q {Target.Q.ToString("0.##", CultureInfo.InvariantCulture)}"
+        RenderEqualizerGraph(CurrentEqualizerState)
+        e.Handled = True
+    End Sub
+
+    Private Async Sub CanvasEqualizerGraph_MouseLeftButtonUp(sender As Object, e As MouseButtonEventArgs) Handles CanvasEqualizerGraph.MouseLeftButtonUp
+        If Not IsDraggingEqualizerPoint Then Return
+        IsDraggingEqualizerPoint = False
+        CanvasEqualizerGraph.ReleaseMouseCapture()
+        If IsEqualizerDragChanged Then
+            IsEqualizerDragChanged = False
+            Await SaveEqualizerStateAsync(CloneEqualizerState(CurrentEqualizerState), "已更新控制点。")
+        End If
+        e.Handled = True
+    End Sub
+
+    Private Function FindEqualizerPointAt(Position As Point) As OmniMixEqualizerPointInfo
+        If CurrentEqualizerState Is Nothing Then Return Nothing
+        Dim Width = CanvasEqualizerGraph.ActualWidth
+        Dim Height = CanvasEqualizerGraph.ActualHeight
+        Dim Best As OmniMixEqualizerPointInfo = Nothing
+        Dim BestDistance = 18.0
+
+        For Each PointInfo In CurrentEqualizerState.Points
+            Dim X = EqualizerFrequencyToX(PointInfo.Frequency, Width)
+            Dim Y = EqualizerGainToY(If(IsPassEqualizerType(PointInfo.Type), 0, PointInfo.GainDb), Height)
+            Dim Distance = Math.Sqrt(Math.Pow(X - Position.X, 2) + Math.Pow(Y - Position.Y, 2))
+            If Distance < BestDistance Then
+                BestDistance = Distance
+                Best = PointInfo
+            End If
+        Next
+
+        Return Best
+    End Function
+
+    Private Class EqualizerBiquad
+        Private ReadOnly B0 As Double
+        Private ReadOnly B1 As Double
+        Private ReadOnly B2 As Double
+        Private ReadOnly A1 As Double
+        Private ReadOnly A2 As Double
+
+        Public Sub New(Frequency As Double, GainDb As Double, Q As Double, TypeValue As String, SampleRate As Double)
+            Frequency = Clamp(Frequency, 20, Math.Min(20000, SampleRate / 2 - 1))
+            Q = Clamp(Q, 0.1, 20)
+            Dim W0 = 2 * Math.PI * Frequency / SampleRate
+            Dim SinW0 = Math.Sin(W0)
+            Dim CosW0 = Math.Cos(W0)
+            Dim Alpha = SinW0 / (2 * Q)
+            Dim A0 = 1.0
+
+            Select Case NormalizeEqualizerType(TypeValue)
+                Case "LowShelf"
+                    Dim A = Math.Pow(10, GainDb / 40)
+                    Dim SqrtA = Math.Sqrt(A)
+                    Dim TwoSqrtAAlpha = 2 * SqrtA * Alpha
+                    A0 = (A + 1) + (A - 1) * CosW0 + TwoSqrtAAlpha
+                    B0 = (A * ((A + 1) - (A - 1) * CosW0 + TwoSqrtAAlpha)) / A0
+                    B1 = (2 * A * ((A - 1) - (A + 1) * CosW0)) / A0
+                    B2 = (A * ((A + 1) - (A - 1) * CosW0 - TwoSqrtAAlpha)) / A0
+                    A1 = (-2 * ((A - 1) + (A + 1) * CosW0)) / A0
+                    A2 = ((A + 1) + (A - 1) * CosW0 - TwoSqrtAAlpha) / A0
+                Case "HighShelf"
+                    Dim A = Math.Pow(10, GainDb / 40)
+                    Dim SqrtA = Math.Sqrt(A)
+                    Dim TwoSqrtAAlpha = 2 * SqrtA * Alpha
+                    A0 = (A + 1) - (A - 1) * CosW0 + TwoSqrtAAlpha
+                    B0 = (A * ((A + 1) + (A - 1) * CosW0 + TwoSqrtAAlpha)) / A0
+                    B1 = (-2 * A * ((A - 1) + (A + 1) * CosW0)) / A0
+                    B2 = (A * ((A + 1) + (A - 1) * CosW0 - TwoSqrtAAlpha)) / A0
+                    A1 = (2 * ((A - 1) - (A + 1) * CosW0)) / A0
+                    A2 = ((A + 1) - (A - 1) * CosW0 - TwoSqrtAAlpha) / A0
+                Case "LowPass"
+                    A0 = 1 + Alpha
+                    B0 = ((1 - CosW0) / 2) / A0
+                    B1 = (1 - CosW0) / A0
+                    B2 = ((1 - CosW0) / 2) / A0
+                    A1 = (-2 * CosW0) / A0
+                    A2 = (1 - Alpha) / A0
+                Case "HighPass"
+                    A0 = 1 + Alpha
+                    B0 = ((1 + CosW0) / 2) / A0
+                    B1 = -(1 + CosW0) / A0
+                    B2 = ((1 + CosW0) / 2) / A0
+                    A1 = (-2 * CosW0) / A0
+                    A2 = (1 - Alpha) / A0
+                Case Else
+                    Dim A = Math.Pow(10, GainDb / 40)
+                    A0 = 1 + Alpha / A
+                    B0 = (1 + Alpha * A) / A0
+                    B1 = (-2 * CosW0) / A0
+                    B2 = (1 - Alpha * A) / A0
+                    A1 = (-2 * CosW0) / A0
+                    A2 = (1 - Alpha / A) / A0
+            End Select
+        End Sub
+
+        Public Function GetMagnitudeDb(Frequency As Double, SampleRate As Double) As Double
+            Dim W = 2 * Math.PI * Frequency / SampleRate
+            Dim CosW = Math.Cos(W)
+            Dim SinW = Math.Sin(W)
+            Dim Cos2W = Math.Cos(2 * W)
+            Dim Sin2W = Math.Sin(2 * W)
+            Dim NumReal = B0 + B1 * CosW + B2 * Cos2W
+            Dim NumImag = -(B1 * SinW + B2 * Sin2W)
+            Dim DenReal = 1 + A1 * CosW + A2 * Cos2W
+            Dim DenImag = -(A1 * SinW + A2 * Sin2W)
+            Dim NumSq = NumReal * NumReal + NumImag * NumImag
+            Dim DenSq = DenReal * DenReal + DenImag * DenImag
+            If DenSq < 0.000000000001 Then Return 0
+            Dim Ratio = NumSq / DenSq
+            If Ratio < 0.000000000001 Then Return -120
+            Return 10 * Math.Log10(Ratio)
+        End Function
+    End Class
 
     Private Sub SetEqualizerButtonsEnabled(Enabled As Boolean)
         BtnEqualizerRefresh.IsEnabled = Not String.IsNullOrWhiteSpace(CurrentBaseUrl)
@@ -1217,7 +1625,6 @@ Public Class PageOmniMixRight
         If EnsureController Then LabPlaybackSummary.Text = "正在注册 GUI 控制端并读取播放实例..."
 
         Try
-            If EnsureController Then Await OmniMixApiClient.ConnectControllerAsync(BaseUrl)
             Dim Instances = Await OmniMixApiClient.GetInstancesAsync(BaseUrl)
             Dim Config = Await OmniMixApiClient.GetConfigAsync(BaseUrl)
             Dim ActiveInstance = PickActiveInstance(Instances, ConfigString(Config, "active_instance", ""))
@@ -1241,7 +1648,7 @@ Public Class PageOmniMixRight
 
         IsUpdatingPlaybackUi = True
         Try
-            Dim CanControl = ActiveInstance IsNot Nothing AndAlso ActiveInstance.IsServerManaged
+            Dim CanControl = CanUseLiveInstanceApi(ActiveInstance)
             CanControlActiveInstance = CanControl
             BtnPlaybackPrev.IsEnabled = CanControl
             BtnPlaybackToggle.IsEnabled = CanControl
@@ -1306,10 +1713,22 @@ Public Class PageOmniMixRight
         End If
 
         If IsShowingHistory Then
-            Dim History = Await OmniMixApiClient.GetInstanceHistoryAsync(BaseUrl, ActiveInstanceId)
+            Dim History As List(Of OmniMixQueueItemInfo) = Nothing
+            Try
+                History = Await OmniMixApiClient.GetInstanceHistoryAsync(BaseUrl, ActiveInstanceId)
+            Catch
+                History = Nothing
+            End Try
+            If History Is Nothing Then History = Await LoadOfflineProfileQueueItemsAsync(BaseUrl, ActiveInstanceId, True)
             RenderQueueItems(History, True)
         Else
-            Dim Queue = Await OmniMixApiClient.GetInstanceQueueAsync(BaseUrl, ActiveInstanceId)
+            Dim Queue As List(Of OmniMixQueueItemInfo) = Nothing
+            Try
+                Queue = Await OmniMixApiClient.GetInstanceQueueAsync(BaseUrl, ActiveInstanceId)
+            Catch
+                Queue = Nothing
+            End Try
+            If Queue Is Nothing Then Queue = Await LoadOfflineProfileQueueItemsAsync(BaseUrl, ActiveInstanceId, False)
             RenderQueueItems(Queue, False)
         End If
     End Function
@@ -1665,6 +2084,9 @@ Public Class PageOmniMixRight
     End Function
 
     Private Sub UpdatePluginPaneVisibility()
+        If PageKey = "Modules" AndAlso CardModuleUi.Visibility <> Visibility.Visible Then
+            CardModules.Visibility = Visibility.Visible
+        End If
         BtnModulesTab.Text = If(CurrentModulesPane = "launchpad", "启动台 ✓", If(CurrentModulesPane = "mod", "Mod ✓", "Mod"))
         BtnGameIntegrationTab.Text = If(CurrentModulesPane = "game", "游戏集成 ✓", "游戏集成")
         PanModulesList.Visibility = If(CurrentModulesPane = "mod", Visibility.Visible, Visibility.Collapsed)
@@ -1681,6 +2103,26 @@ Public Class PageOmniMixRight
         SetModulesPane("game")
     End Sub
 
+    Private Sub AddOmniMixSectionHeader(Panel As Panel, Title As String, Info As String, Optional TopMargin As Double = 10)
+        If Panel Is Nothing Then Return
+        Panel.Children.Add(New MyListItem With {
+            .Title = Title,
+            .Info = Info,
+            .Height = 40,
+            .PaddingLeft = 8,
+            .Margin = New Thickness(0, TopMargin, 0, 4),
+            .IsScaleAnimationEnabled = False,
+            .Type = MyListItem.CheckType.Clickable
+        })
+    End Sub
+
+    Private Sub ScrollOmniMixPageToTop()
+        Try
+            PanBack.Dispatcher.BeginInvoke(Sub() PanBack.ScrollToHome(), System.Windows.Threading.DispatcherPriority.Background)
+        Catch
+        End Try
+    End Sub
+
     Private Sub RenderGameIntegration(Stats As OmniMixInstanceStatsInfo, Instances As List(Of OmniMixPlaybackInstanceInfo))
         Stats = If(Stats, New OmniMixInstanceStatsInfo)
         Instances = If(Instances, New List(Of OmniMixPlaybackInstanceInfo))
@@ -1690,27 +2132,30 @@ Public Class PageOmniMixRight
         Dim Games = OmniMixModDeploymentService.GetGameCatalog()
         LabModulesSummary.Text = $"游戏集成：{Games.Count} 个支持游戏；后端 {Stats.InstanceCount} 个实例，{AttachedCount} 个在线音频端，{Stats.ControllerClients} 个控制端。"
 
+        AddOmniMixSectionHeader(PanGameIntegrationList, "支持的游戏", "选择游戏目录，安装集成文件后再启动游戏。", 0)
         For Each Game In Games
             AddGameIntegrationGameItem(Game)
         Next
 
         If DeploymentLogs.Count > 0 Then
+            AddOmniMixSectionHeader(PanGameIntegrationList, "最近部署", "游戏集成安装器最近执行的操作。", 12)
             PanGameIntegrationList.Children.Add(New MyListItem With {
                 .Title = "最近部署日志",
                 .Info = String.Join("  /  ", DeploymentLogs.TakeLast(Math.Min(DeploymentLogs.Count, 4))),
-                .Height = 54,
+                .Height = 58,
                 .PaddingLeft = 8,
-                .Margin = New Thickness(0, 8, 0, 8),
+                .Margin = New Thickness(0, 0, 0, 8),
                 .IsScaleAnimationEnabled = False,
                 .Type = MyListItem.CheckType.Clickable
             })
         End If
 
+        AddOmniMixSectionHeader(PanGameIntegrationList, "运行实例", "在线的游戏、音频端以及已注册的播放配置。", 12)
         If Instances.Count = 0 Then
             PanGameIntegrationList.Children.Add(New MyListItem With {
                 .Title = "暂无游戏集成实例",
                 .Info = "后端在线，但还没有游戏或音频端连接到 OmniMix。",
-                .Height = 42,
+                .Height = 50,
                 .PaddingLeft = 8,
                 .Margin = New Thickness(0, 0, 0, 2),
                 .IsScaleAnimationEnabled = False,
@@ -1722,9 +2167,9 @@ Public Class PageOmniMixRight
         PanGameIntegrationList.Children.Add(New MyListItem With {
             .Title = "后端实例状态",
             .Info = "在线游戏或已登记的离线播放实例。",
-            .Height = 38,
+            .Height = 1,
             .PaddingLeft = 8,
-            .Margin = New Thickness(0, 8, 0, 2),
+            .Margin = New Thickness(0, 0, 0, 0),
             .IsScaleAnimationEnabled = False,
             .Type = MyListItem.CheckType.Clickable
         })
@@ -1741,9 +2186,9 @@ Public Class PageOmniMixRight
             PanGameIntegrationList.Children.Add(New MyListItem With {
                 .Title = NonEmpty(Instance.Id, Instance.ClientId),
                 .Info = String.Join(" · ", InfoParts),
-                .Height = 44,
+                .Height = 52,
                 .PaddingLeft = 8,
-                .Margin = New Thickness(0, 0, 0, 2),
+                .Margin = New Thickness(0, 0, 0, 4),
                 .IsScaleAnimationEnabled = False,
                 .Type = MyListItem.CheckType.Clickable,
                 .Tag = Instance
@@ -1837,16 +2282,146 @@ Public Class PageOmniMixRight
         Dim Item As New MyListItem With {
             .Title = Game.Name,
             .Info = String.Join(" · ", InfoParts),
-            .Height = 54,
+            .Height = 64,
             .PaddingLeft = 8,
-            .Margin = New Thickness(0, 0, 0, 4),
+            .Margin = New Thickness(0, 0, 0, 6),
+            .Logo = Logo.IconButtonSetup,
+            .LogoScale = 0.86,
             .IsScaleAnimationEnabled = False,
             .Type = MyListItem.CheckType.Clickable,
             .Tag = Game
         }
-        Item.Buttons = Buttons
+        AddHandler Item.Click, AddressOf GameIntegrationItem_Click
         PanGameIntegrationList.Children.Add(Item)
     End Sub
+
+    Private Sub GameIntegrationItem_Click(sender As Object, e As MouseButtonEventArgs)
+        Dim Game = TryCast(CType(sender, FrameworkElement).Tag, OmniMixGameDeclaration)
+        If Game Is Nothing Then Return
+        OpenGameIntegrationDetail(Game)
+    End Sub
+
+    Private Sub OpenGameIntegrationDetail(Game As OmniMixGameDeclaration)
+        If Game Is Nothing Then Return
+
+        PreviousModulesPaneForDetail = CurrentModulesPane
+        ModuleUiRequestSerial += 1
+        CurrentDetailKind = "game"
+        CurrentGameDetailId = Game.Id
+        CurrentModuleId = ""
+        CurrentUiKind = "game"
+        CurrentLinkId = Game.Id
+        ExpandedModuleTitle = Game.Name
+
+        LabModuleUiTitle.Text = "游戏集成 - " & Game.Name
+        CardModules.Visibility = Visibility.Collapsed
+        CardModuleUi.Visibility = Visibility.Visible
+        PanModuleUi.Children.Clear()
+        RenderGameIntegrationDetail(Game)
+        ScrollOmniMixPageToTop()
+    End Sub
+
+    Private Sub RenderGameIntegrationDetail(Game As OmniMixGameDeclaration)
+        PanModuleUi.Children.Clear()
+
+        Dim GamePath = OmniMixModDeploymentService.LoadGamePath(Game.Id)
+        Dim IsValidPath = OmniMixModDeploymentService.VerifyGameDirectory(GamePath, Game)
+        Dim ModInfo = OmniMixModDeploymentService.GetPrimaryMod(Game)
+        Dim BepInExStatus = If(Game.SupportedFrameworks.Contains("bepinex_5"), OmniMixModDeploymentService.CheckBepInExStatus(GamePath), OmniMixBepInExStatus.NotInstalled)
+        Dim ModStatus = OmniMixModDeploymentService.CheckModStatus(GamePath, ModInfo)
+
+        Dim InfoParts As New List(Of String)
+        InfoParts.Add(If(IsValidPath, "目录有效", If(String.IsNullOrWhiteSpace(GamePath), "未选择目录", "目录无效")))
+        If Not String.IsNullOrWhiteSpace(GamePath) Then InfoParts.Add(GamePath)
+        If Game.SupportedFrameworks.Contains("bepinex_5") Then InfoParts.Add("BepInEx " & GetBepInExStatusText(BepInExStatus))
+        If ModInfo IsNot Nothing Then InfoParts.Add(ModInfo.Name & " " & If(ModStatus = OmniMixModInstallStatus.Installed, "已安装", "未安装"))
+
+        LabModuleUiSummary.Text = String.Join(" · ", InfoParts)
+        PanModuleUi.Children.Add(New MyListItem With {
+            .Title = Game.Name,
+            .Info = String.Join(" · ", InfoParts),
+            .Height = 58,
+            .PaddingLeft = 8,
+            .Margin = New Thickness(0, 0, 0, 10),
+            .Logo = Logo.IconButtonSetup,
+            .LogoScale = 0.86,
+            .IsScaleAnimationEnabled = False,
+            .Type = MyListItem.CheckType.Clickable
+        })
+
+        AddGameDetailAction(PanModuleUi, "选择游戏目录", "指定游戏根目录，用于安装和写入端口文件。", Logo.IconButtonOpen, "选择游戏目录", Game.Id, AddressOf GamePathSelectButton_Click)
+        If Not String.IsNullOrWhiteSpace(GamePath) AndAlso Directory.Exists(GamePath) Then
+            AddGameDetailAction(PanModuleUi, "打开游戏目录", GamePath, Logo.IconButtonList, "打开游戏目录", GamePath, AddressOf GamePathOpenButton_Click)
+        End If
+
+        If Game.SupportedFrameworks.Contains("bepinex_5") Then
+            If BepInExStatus = OmniMixBepInExStatus.Managed Then
+                AddGameDetailAction(PanModuleUi, "卸载 BepInEx", "移除 OmniMix 管理的 BepInEx 文件。", Logo.IconButtonDelete, "卸载 BepInEx", Game.Id, AddressOf BepInExUninstallButton_Click, True, MyIconButton.Themes.Red)
+            Else
+                Dim CanInstallBepInEx = IsValidPath AndAlso OmniMixModDeploymentService.IsPackageAvailable("BepInEx_win_x64_5.4.23.5.zip")
+                AddGameDetailAction(PanModuleUi, "安装 BepInEx", If(CanInstallBepInEx, "安装 OmniMix 需要的 BepInEx 框架。", "需要有效游戏目录和 BepInEx 压缩包。"), Logo.IconButtonSave, "安装 BepInEx", Game.Id, AddressOf BepInExInstallButton_Click, CanInstallBepInEx)
+            End If
+        End If
+
+        If ModInfo IsNot Nothing Then
+            If ModStatus = OmniMixModInstallStatus.Installed Then
+                AddGameDetailAction(PanModuleUi, "卸载 " & ModInfo.Name, "移除当前游戏集成 Mod。", Logo.IconButtonDelete, "卸载 " & ModInfo.Name, Game.Id, AddressOf ModUninstallButton_Click, True, MyIconButton.Themes.Red)
+            Else
+                Dim CanInstallMod = IsValidPath AndAlso OmniMixModDeploymentService.IsPackageAvailable(ModInfo.ArchiveName) AndAlso
+                    (Not ModInfo.UsesFramework OrElse BepInExStatus <> OmniMixBepInExStatus.NotInstalled)
+                AddGameDetailAction(PanModuleUi, "安装 " & ModInfo.Name, If(CanInstallMod, "写入 Mod 并注册后端实例配置。", "需要有效目录、Mod 包以及必要框架。"), Logo.IconButtonSetup, "安装 " & ModInfo.Name, Game.Id, AddressOf ModInstallButton_Click, CanInstallMod)
+            End If
+        End If
+
+        If DeploymentLogs.Count > 0 Then
+            PanModuleUi.Children.Add(New MyListItem With {
+                .Title = "最近操作",
+                .Info = String.Join("  /  ", DeploymentLogs.TakeLast(Math.Min(DeploymentLogs.Count, 4))),
+                .Height = 54,
+                .PaddingLeft = 8,
+                .Margin = New Thickness(0, 8, 0, 0),
+                .IsScaleAnimationEnabled = False,
+                .Type = MyListItem.CheckType.Clickable
+            })
+        End If
+    End Sub
+
+    Private Sub AddGameDetailAction(Panel As Panel, Title As String, Info As String, LogoPath As String, Tooltip As String, Tag As Object, Handler As MyIconButton.ClickEventHandler, Optional Enabled As Boolean = True, Optional Theme As MyIconButton.Themes = MyIconButton.Themes.Color)
+        Dim ActionButton As New MyIconButton With {
+            .Logo = LogoPath,
+            .LogoScale = 0.95,
+            .ToolTip = Tooltip,
+            .Tag = Tag,
+            .IsEnabled = Enabled,
+            .Theme = Theme
+        }
+        AddHandler ActionButton.Click, Handler
+
+        Dim Item As New MyListItem With {
+            .Title = Title,
+            .Info = Info,
+            .Height = 52,
+            .PaddingLeft = 8,
+            .Margin = New Thickness(0, 0, 0, 5),
+            .IsScaleAnimationEnabled = False,
+            .Type = MyListItem.CheckType.Clickable
+        }
+        Item.Buttons = New List(Of MyIconButton) From {ActionButton}
+        Panel.Children.Add(Item)
+    End Sub
+
+    Private Async Function RefreshGameIntegrationAfterOperationAsync(Game As OmniMixGameDeclaration) As Task
+        If Game IsNot Nothing AndAlso CurrentDetailKind = "game" AndAlso String.Equals(CurrentGameDetailId, Game.Id, StringComparison.OrdinalIgnoreCase) Then
+            OpenGameIntegrationDetail(Game)
+            Return
+        End If
+
+        If String.IsNullOrWhiteSpace(CurrentBaseUrl) Then
+            RenderGameIntegration(New OmniMixInstanceStatsInfo, New List(Of OmniMixPlaybackInstanceInfo))
+        Else
+            Await RefreshModulesAsync(CurrentBaseUrl)
+        End If
+    End Function
 
     Private Async Sub GamePathSelectButton_Click(sender As Object, e As EventArgs)
         Dim Game = OmniMixModDeploymentService.GetGame(TryCast(CType(sender, FrameworkElement).Tag, String))
@@ -1898,7 +2473,7 @@ Public Class PageOmniMixRight
         Dim Success = Await Task.Run(Function() OmniMixModDeploymentService.DeployBepInEx(GamePath, Logs))
         DeploymentLogs = Logs
         Hint(If(Success, "BepInEx 安装完成。", "BepInEx 安装失败。"), If(Success, HintType.Green, HintType.Red))
-        If String.IsNullOrWhiteSpace(CurrentBaseUrl) Then RenderGameIntegration(New OmniMixInstanceStatsInfo, New List(Of OmniMixPlaybackInstanceInfo)) Else Await RefreshModulesAsync(CurrentBaseUrl)
+        Await RefreshGameIntegrationAfterOperationAsync(Game)
     End Sub
 
     Private Async Sub BepInExUninstallButton_Click(sender As Object, e As EventArgs)
@@ -1912,7 +2487,7 @@ Public Class PageOmniMixRight
         Dim Success = Await Task.Run(Function() OmniMixModDeploymentService.UndeployBepInEx(GamePath, Logs))
         DeploymentLogs = Logs
         Hint(If(Success, "BepInEx 卸载完成。", "BepInEx 卸载失败。"), If(Success, HintType.Green, HintType.Red))
-        If String.IsNullOrWhiteSpace(CurrentBaseUrl) Then RenderGameIntegration(New OmniMixInstanceStatsInfo, New List(Of OmniMixPlaybackInstanceInfo)) Else Await RefreshModulesAsync(CurrentBaseUrl)
+        Await RefreshGameIntegrationAfterOperationAsync(Game)
     End Sub
 
     Private Async Sub ModInstallButton_Click(sender As Object, e As EventArgs)
@@ -1945,7 +2520,7 @@ Public Class PageOmniMixRight
             Await RegisterDeployedInstanceAsync(InstanceId, ModInfo, GamePath)
             Hint(ModInfo.Name & " 安装完成。", HintType.Green)
         End If
-        If String.IsNullOrWhiteSpace(CurrentBaseUrl) Then RenderGameIntegration(New OmniMixInstanceStatsInfo, New List(Of OmniMixPlaybackInstanceInfo)) Else Await RefreshModulesAsync(CurrentBaseUrl)
+        Await RefreshGameIntegrationAfterOperationAsync(Game)
     End Sub
 
     Private Async Sub ModUninstallButton_Click(sender As Object, e As EventArgs)
@@ -1961,7 +2536,7 @@ Public Class PageOmniMixRight
         Dim Success = Await Task.Run(Function() OmniMixModDeploymentService.UndeployMod(GamePath, ModInfo, Logs))
         DeploymentLogs = Logs
         Hint(If(Success, ModInfo.Name & " 卸载完成。", ModInfo.Name & " 卸载失败。"), If(Success, HintType.Green, HintType.Red))
-        If String.IsNullOrWhiteSpace(CurrentBaseUrl) Then RenderGameIntegration(New OmniMixInstanceStatsInfo, New List(Of OmniMixPlaybackInstanceInfo)) Else Await RefreshModulesAsync(CurrentBaseUrl)
+        Await RefreshGameIntegrationAfterOperationAsync(Game)
     End Sub
 
     Private Async Function RegisterDeployedInstanceAsync(InstanceId As String, ModInfo As OmniMixModDeclaration, GamePath As String) As Task
@@ -1977,7 +2552,73 @@ Public Class PageOmniMixRight
         End Try
     End Function
 
-    Private Function BuildDefaultInstanceProfile() As Dictionary(Of String, Object)
+    Private Async Function SyncGameIntegrationBindingsAsync(BaseUrl As String) As Task
+        If String.IsNullOrWhiteSpace(BaseUrl) Then Return
+
+        Dim BackendPort = GetPortFromBaseUrl(BaseUrl, 17890)
+        Dim ExpectedByMod As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
+        Dim Logs As New List(Of String)
+
+        For Each Game In OmniMixModDeploymentService.GetGameCatalog()
+            Dim ModInfo = OmniMixModDeploymentService.GetPrimaryMod(Game)
+            If ModInfo Is Nothing Then Continue For
+
+            Dim GamePath = OmniMixModDeploymentService.LoadGamePath(Game.Id)
+            If Not OmniMixModDeploymentService.VerifyGameDirectory(GamePath, Game) Then Continue For
+            If OmniMixModDeploymentService.CheckModStatus(GamePath, ModInfo) <> OmniMixModInstallStatus.Installed Then Continue For
+
+            Dim ExpectedId = OmniMixModDeploymentService.EnsureRuntimeBinding(GamePath, ModInfo, BackendPort, Logs)
+            If String.IsNullOrWhiteSpace(ExpectedId) Then Continue For
+            ExpectedByMod(ModInfo.Id) = ExpectedId
+
+            Try
+                Await OmniMixApiClient.AddPortFileDirAsync(BaseUrl, GamePath)
+                Await OmniMixApiClient.SetInstanceMetaAsync(BaseUrl, ExpectedId, ModInfo.Id, ModInfo.Name, ModInfo.Mode)
+            Catch
+            End Try
+        Next
+
+        If ExpectedByMod.Count = 0 Then Return
+
+        Try
+            Dim Instances = Await OmniMixApiClient.GetInstancesAsync(BaseUrl)
+            Dim RemovedInvalid As Integer = 0
+            For Each Instance In If(Instances, New List(Of OmniMixPlaybackInstanceInfo))
+                If Instance Is Nothing OrElse String.IsNullOrWhiteSpace(Instance.Id) Then Continue For
+                For Each Pair In ExpectedByMod
+                    If IsStaleBoundInstanceId(Instance.Id, Pair.Value) Then
+                        Try
+                            Await OmniMixApiClient.DeleteInstanceAsync(BaseUrl, Instance.Id)
+                            RemovedInvalid += 1
+                        Catch
+                        End Try
+                        Exit For
+                    End If
+                Next
+            Next
+
+            Dim Config = Await OmniMixApiClient.GetConfigAsync(BaseUrl)
+            Dim ActiveId = ConfigString(Config, "active_instance", "")
+            If Not String.IsNullOrWhiteSpace(ActiveId) AndAlso ExpectedByMod.Values.Any(Function(ExpectedId) IsStaleBoundInstanceId(ActiveId, ExpectedId)) Then
+                Await OmniMixApiClient.SetActiveInstanceAsync(BaseUrl, "")
+            End If
+
+            If RemovedInvalid > 0 Then
+                Logs.Add("  Removed stale backend instances: " & RemovedInvalid)
+            End If
+        Catch
+        End Try
+
+        If Logs.Count > 0 Then DeploymentLogs = Logs
+    End Function
+
+    Private Shared Function IsStaleBoundInstanceId(InstanceId As String, ExpectedId As String) As Boolean
+        If String.IsNullOrWhiteSpace(InstanceId) OrElse String.IsNullOrWhiteSpace(ExpectedId) Then Return False
+        If String.Equals(InstanceId, ExpectedId, StringComparison.OrdinalIgnoreCase) Then Return False
+        Return InstanceId.EndsWith(ExpectedId, StringComparison.OrdinalIgnoreCase)
+    End Function
+
+    Private Shared Function BuildDefaultInstanceProfile() As Dictionary(Of String, Object)
         Dim Queue As New Dictionary(Of String, Object) From {
             {"Id", "default"},
             {"Name", "Default"},
@@ -2104,9 +2745,11 @@ Public Class PageOmniMixRight
         Dim Item As New MyListItem With {
             .Title = NonEmpty(ModuleInfo.Name, ModuleInfo.Id),
             .Info = BuildModuleInfoText(ModuleInfo),
-            .Height = 46,
+            .Height = 58,
             .PaddingLeft = 8,
             .Margin = New Thickness(0, 0, 0, 2),
+            .Logo = If(ModuleInfo.Enabled, Logo.IconButtonCheck, Logo.IconButtonStop),
+            .LogoScale = 0.82,
             .IsScaleAnimationEnabled = False,
             .Type = MyListItem.CheckType.Clickable,
             .Tag = ModuleInfo
@@ -2153,7 +2796,7 @@ Public Class PageOmniMixRight
         Dim Item = CType(sender, MyListItem)
         Dim ModuleInfo = CType(Item.Tag, OmniMixModuleInfo)
         If ModuleInfo.HasSettingsUI Then
-            Await OpenModuleUiAsync(ModuleInfo, "settings")
+            Await OpenModuleUiAsync(ModuleInfo, "default")
         ElseIf ModuleInfo.LinkEntries IsNot Nothing AndAlso ModuleInfo.LinkEntries.Count > 0 Then
             Dim LinkEntry = ModuleInfo.LinkEntries(0)
             Await OpenModuleUiAsync(ModuleInfo, "link", LinkEntry.Id, LinkEntry.Title)
@@ -2165,7 +2808,7 @@ Public Class PageOmniMixRight
     Private Async Sub ModuleSettingsButton_Click(sender As Object, e As EventArgs)
         Dim Button = CType(sender, MyIconButton)
         Dim ModuleInfo = CType(Button.Tag, OmniMixModuleInfo)
-        Await OpenModuleUiAsync(ModuleInfo, "settings")
+        Await OpenModuleUiAsync(ModuleInfo, "default")
     End Sub
 
     Private Async Sub ModuleLinkButton_Click(sender As Object, e As EventArgs)
@@ -2184,6 +2827,8 @@ Public Class PageOmniMixRight
         CurrentModuleId = ModuleInfo.Id
         CurrentUiKind = UiKind
         CurrentLinkId = If(LinkId, "")
+        CurrentDetailKind = "module"
+        CurrentGameDetailId = ""
         ExpandedModuleTitle = NonEmpty(LinkTitle, NonEmpty(ModuleInfo.Name, ModuleInfo.Id))
         Dim UiLabel = If(UiKind = "settings", "模块设置", If(UiKind = "link", "快捷入口", "模块 UI"))
         LabModuleUiTitle.Text = UiLabel & " - " & ExpandedModuleTitle
@@ -2191,6 +2836,7 @@ Public Class PageOmniMixRight
         CardModuleUi.Visibility = Visibility.Visible
         PanModuleUi.Children.Clear()
         LabModuleUiSummary.Text = "正在加载 " & NonEmpty(ModuleInfo.Name, ModuleInfo.Id) & " 的" & UiLabel & "..."
+        ScrollOmniMixPageToTop()
 
         Try
             Await WsClient.ConnectAsync(CurrentBaseUrl)
@@ -2206,7 +2852,12 @@ Public Class PageOmniMixRight
             If RequestSerial <> ModuleUiRequestSerial Then Return
             PanModuleUi.Children.Clear()
             If Tree IsNot Nothing Then
-                PanModuleUi.Children.Add(OmniMixRawNodeRenderer.Render(Tree, CurrentBaseUrl, AddressOf ModuleUiEvent_Dispatch))
+                Dim Rendered = OmniMixRawNodeRenderer.Render(Tree, CurrentBaseUrl, AddressOf ModuleUiEvent_Dispatch)
+                If IsRenderedModuleUiEmpty(Rendered) Then
+                    PanModuleUi.Children.Add(CreateModuleUiEmptyItem("模块返回了空 UI", "请返回后重新进入，或在模块完成登录/导入流程后刷新。"))
+                Else
+                    PanModuleUi.Children.Add(Rendered)
+                End If
             Else
                 PanModuleUi.Children.Add(New MyListItem With {
                     .Title = "暂无可显示内容",
@@ -2220,6 +2871,7 @@ Public Class PageOmniMixRight
             End If
             LabModulesSummary.Text = "已加载模块 UI：" & ExpandedModuleTitle
             LabModuleUiSummary.Text = "已加载模块 UI，交互事件将通过 WebSocket 分发到后端。"
+            ScrollOmniMixPageToTop()
         Catch Ex As Exception
             If RequestSerial <> ModuleUiRequestSerial Then Return
             PanModuleUi.Children.Clear()
@@ -2234,19 +2886,70 @@ Public Class PageOmniMixRight
             })
             LabModulesSummary.Text = "模块 UI 加载失败：" & Ex.Message
             LabModuleUiSummary.Text = "模块 UI 加载失败：" & Ex.Message
+            ScrollOmniMixPageToTop()
         End Try
+    End Function
+
+    Private Shared Function IsRenderedModuleUiEmpty(Element As FrameworkElement) As Boolean
+        Dim Panel = TryCast(Element, Panel)
+        Return Panel IsNot Nothing AndAlso Panel.Children.Count = 0
+    End Function
+
+    Private Shared Function CreateModuleUiEmptyItem(Title As String, Info As String) As MyListItem
+        Return New MyListItem With {
+            .Title = Title,
+            .Info = Info,
+            .Height = 46,
+            .PaddingLeft = 8,
+            .Margin = New Thickness(0, 0, 0, 2),
+            .IsScaleAnimationEnabled = False,
+            .Type = MyListItem.CheckType.Clickable
+        }
     End Function
 
     Private Async Sub ModuleUiEvent_Dispatch(NodeId As String, Action As String, Value As String)
         If String.IsNullOrWhiteSpace(CurrentBaseUrl) OrElse String.IsNullOrWhiteSpace(CurrentModuleId) Then Return
         Try
+            Dim NeedsRefresh = IsModuleUiRefreshEvent(NodeId, Action)
+            Dim NeedsLibraryRefresh = IsModuleLibraryRefreshEvent(NodeId, Action)
+            If NeedsRefresh Then LabModuleUiSummary.Text = "正在处理模块操作：" & NodeId
             Await WsClient.SendUiEventAsync(CurrentBaseUrl, CurrentModuleId, NodeId, Action, Value, CurrentUiKind, CurrentLinkId)
+            If NeedsRefresh Then
+                Hint(If(NeedsLibraryRefresh, "已发送导入请求，正在等待后端处理...", "已发送模块操作，正在刷新状态..."), HintType.Green, False)
+                Await Task.Delay(If(NeedsLibraryRefresh, 2200, 1000))
+                Await RefreshCurrentModuleUiAsync()
+                If NeedsLibraryRefresh Then Await RefreshLibraryCacheAsync(CurrentBaseUrl)
+                Hint(If(NeedsLibraryRefresh, "导入请求已提交，曲库状态已刷新。", "模块操作已处理，状态已刷新。"), HintType.Green, False)
+            End If
             LabModulesSummary.Text = "已发送模块 UI 事件：" & NodeId & " / " & Action
             LabModuleUiSummary.Text = "已发送模块 UI 事件：" & NodeId & " / " & Action
         Catch Ex As Exception
             LabModuleUiSummary.Text = "模块 UI 事件发送失败：" & Ex.Message
         End Try
     End Sub
+
+    Private Function IsModuleUiRefreshEvent(NodeId As String, Action As String) As Boolean
+        Dim Key = If(NodeId, "")
+        If Key.IndexOf("import", StringComparison.OrdinalIgnoreCase) >= 0 Then Return True
+        If Key.IndexOf("playlist", StringComparison.OrdinalIgnoreCase) >= 0 Then Return True
+        If Key.IndexOf("login", StringComparison.OrdinalIgnoreCase) >= 0 Then Return True
+        If Key.IndexOf("logout", StringComparison.OrdinalIgnoreCase) >= 0 Then Return True
+        Return String.Equals(Action, "click", StringComparison.OrdinalIgnoreCase)
+    End Function
+
+    Private Function IsModuleLibraryRefreshEvent(NodeId As String, Action As String) As Boolean
+        Dim Key = If(NodeId, "")
+        If Key.IndexOf("import", StringComparison.OrdinalIgnoreCase) >= 0 Then Return True
+        If Key.IndexOf("playlist", StringComparison.OrdinalIgnoreCase) >= 0 Then Return True
+        Return False
+    End Function
+
+    Private Async Function RefreshCurrentModuleUiAsync() As Task
+        If String.IsNullOrWhiteSpace(CurrentModuleId) Then Return
+        Dim ModuleInfo = CurrentModules.FirstOrDefault(Function(Info) String.Equals(Info.Id, CurrentModuleId, StringComparison.OrdinalIgnoreCase))
+        If ModuleInfo Is Nothing Then Return
+        Await OpenModuleUiAsync(ModuleInfo, CurrentUiKind, CurrentLinkId, If(CurrentUiKind = "link", ExpandedModuleTitle, ""))
+    End Function
 
     Private Sub BtnModuleUiBack_Click(sender As Object, e As EventArgs) Handles BtnModuleUiBack.Click
         CollapseModuleUi()
@@ -2303,6 +3006,8 @@ Public Class PageOmniMixRight
         CurrentModuleId = ""
         CurrentUiKind = "default"
         CurrentLinkId = ""
+        CurrentDetailKind = ""
+        CurrentGameDetailId = ""
         ExpandedModuleKey = ""
         ExpandedModuleTree = Nothing
         ExpandedModuleError = ""
@@ -2403,14 +3108,40 @@ Public Class PageOmniMixRight
         If PageKey <> "Library" Then Return
 
         LabLibrarySummary.Text = "正在加载曲库..."
-        PanLibraryList.Children.Clear()
+        Await RefreshLibraryCacheAsync(BaseUrl)
+    End Function
 
+    Private Async Function RefreshLibraryCacheAsync(BaseUrl As String) As Task
+        If IsRefreshingLibraryCache Then Return
+        IsRefreshingLibraryCache = True
         Try
             Dim Playlist = Await OmniMixApiClient.GetPlaylistAsync(BaseUrl)
-            CurrentLibraryPlaylist = If(Playlist, New OmniMixPlaylistData)
-            SetLibraryPane(CurrentLibraryPane)
+            Playlist = If(Playlist, New OmniMixPlaylistData)
+            Dim HasIncomingLibrary = If(Playlist.Tags, New List(Of OmniMixTagInfo)).Count > 0 OrElse
+                If(Playlist.Albums, New List(Of OmniMixAlbumInfo)).Count > 0 OrElse
+                If(Playlist.Songs, New List(Of OmniMixSongInfo)).Count > 0
+            Dim HasExistingLibrary = CurrentLibraryPlaylist IsNot Nothing AndAlso (
+                If(CurrentLibraryPlaylist.Tags, New List(Of OmniMixTagInfo)).Count > 0 OrElse
+                If(CurrentLibraryPlaylist.Albums, New List(Of OmniMixAlbumInfo)).Count > 0 OrElse
+                If(CurrentLibraryPlaylist.Songs, New List(Of OmniMixSongInfo)).Count > 0)
+            If Not HasIncomingLibrary AndAlso HasExistingLibrary Then Return
+
+            CurrentLibraryPlaylist = Playlist
+            Dim TagSongs As New Dictionary(Of String, List(Of OmniMixSongInfo))(StringComparer.OrdinalIgnoreCase)
+            For Each TagInfo In If(CurrentLibraryPlaylist.Tags, New List(Of OmniMixTagInfo))
+                If String.IsNullOrWhiteSpace(TagInfo.Id) Then Continue For
+                Try
+                    TagSongs(TagInfo.Id) = Await OmniMixApiClient.GetSongsAsync(BaseUrl, TagId:=TagInfo.Id)
+                Catch
+                End Try
+            Next
+            CurrentLibraryTagSongs = TagSongs
+
+            If PageKey = "Library" Then RenderLibrary()
         Catch Ex As Exception
             LabLibrarySummary.Text = "曲库加载失败：" & Ex.Message
+        Finally
+            IsRefreshingLibraryCache = False
         End Try
     End Function
 
@@ -2426,6 +3157,7 @@ Public Class PageOmniMixRight
         Dim VisibleSongs = Songs.
             Where(Function(Song) Not HasSourceFilter OrElse String.Equals(Song.ModuleId, SelectedModuleId, StringComparison.OrdinalIgnoreCase)).
             ToList()
+        VisibleSongs = MergeLibraryTagSongs(VisibleSongs, SelectedModuleId)
         Dim VisibleAlbums = Albums.
             Where(Function(Album)
                       If Not HasSourceFilter Then Return True
@@ -2446,6 +3178,31 @@ Public Class PageOmniMixRight
             AddLibraryAlbumItem(Group)
         Next
     End Sub
+
+    Private Function MergeLibraryTagSongs(Songs As List(Of OmniMixSongInfo), SelectedModuleId As String) As List(Of OmniMixSongInfo)
+        Dim Result = If(Songs, New List(Of OmniMixSongInfo)).ToList()
+        Dim KnownUuids As New HashSet(Of String)(Result.Select(Function(Song) If(Song.Uuid, "")), StringComparer.OrdinalIgnoreCase)
+        Dim HasSourceFilter = Not String.IsNullOrWhiteSpace(SelectedModuleId)
+        Dim RelevantTagIds = If(CurrentLibraryPlaylist?.Tags, New List(Of OmniMixTagInfo)).
+            Where(Function(TagInfo) Not HasSourceFilter OrElse String.Equals(TagInfo.ModuleId, SelectedModuleId, StringComparison.OrdinalIgnoreCase)).
+            Select(Function(TagInfo) TagInfo.Id).
+            Where(Function(TagId) Not String.IsNullOrWhiteSpace(TagId)).
+            ToList()
+
+        For Each TagId In RelevantTagIds
+            Dim TagSongList As List(Of OmniMixSongInfo) = Nothing
+            If Not CurrentLibraryTagSongs.TryGetValue(TagId, TagSongList) Then Continue For
+            For Each SongInfo In If(TagSongList, New List(Of OmniMixSongInfo))
+                If SongInfo Is Nothing OrElse String.IsNullOrWhiteSpace(SongInfo.Uuid) Then Continue For
+                If KnownUuids.Contains(SongInfo.Uuid) Then Continue For
+                If HasSourceFilter AndAlso Not String.IsNullOrWhiteSpace(SongInfo.ModuleId) AndAlso Not String.Equals(SongInfo.ModuleId, SelectedModuleId, StringComparison.OrdinalIgnoreCase) Then Continue For
+                Result.Add(SongInfo)
+                KnownUuids.Add(SongInfo.Uuid)
+            Next
+        Next
+
+        Return Result
+    End Function
 
     Private Sub AddLibraryItem(Title As String, Info As String, Level As Integer)
         PanLibraryList.Children.Add(New MyListItem With {
@@ -2629,13 +3386,19 @@ Public Class PageOmniMixRight
         End If
 
         Try
-            Dim Instance = Await GetControllableInstanceAsync()
+            Dim Instance = Await GetTargetInstanceAsync()
             If Instance Is Nothing Then
                 LabLibrarySummary.Text = "没有可控制的播放实例，暂时无法加入队列。"
                 Return
             End If
 
-            Await OmniMixApiClient.AddToQueueRangeAsync(CurrentBaseUrl, Instance.Id, Uuids)
+            If CanUseLiveInstanceApi(Instance) Then
+                Await OmniMixApiClient.AddToQueueRangeAsync(CurrentBaseUrl, Instance.Id, Uuids)
+            Else
+                Await AddUuidsToOfflineProfileAsync(Instance.Id, Uuids)
+            End If
+            Hint("Added to queue: " & Uuids.Count & " song(s).", HintType.Green, False)
+            Await RefreshQueuePaneOrBackendAsync()
             LabLibrarySummary.Text = $"已加入队列：{NonEmpty(Payload.Name, Payload.GroupId)}（{Uuids.Count} 首）"
         Catch Ex As Exception
             LabLibrarySummary.Text = "加入队列失败：" & Ex.Message
@@ -2646,13 +3409,17 @@ Public Class PageOmniMixRight
         If String.IsNullOrWhiteSpace(CurrentBaseUrl) Then Return
 
         Try
-            Dim Instance = Await GetControllableInstanceAsync()
+            Dim Instance = Await GetTargetInstanceAsync()
             If Instance Is Nothing Then
                 LabLibrarySummary.Text = "没有可控制的播放实例，暂时无法播放歌曲。"
                 Return
             End If
 
-            Await OmniMixApiClient.PlayAsync(CurrentBaseUrl, Instance.Id, SongInfo.Uuid)
+            If CanUseLiveInstanceApi(Instance) Then
+                Await OmniMixApiClient.PlayAsync(CurrentBaseUrl, Instance.Id, SongInfo.Uuid)
+            Else
+                Await AddUuidsToOfflineProfileAsync(Instance.Id, New List(Of String) From {SongInfo.Uuid})
+            End If
             LabLibrarySummary.Text = "已发送播放指令：" & NonEmpty(SongInfo.Title, SongInfo.Uuid)
         Catch Ex As Exception
             LabLibrarySummary.Text = "播放失败：" & Ex.Message
@@ -2663,31 +3430,349 @@ Public Class PageOmniMixRight
         If String.IsNullOrWhiteSpace(CurrentBaseUrl) Then Return
 
         Try
-            Dim Instance = Await GetControllableInstanceAsync()
+            Dim Instance = Await GetTargetInstanceAsync()
             If Instance Is Nothing Then
                 LabLibrarySummary.Text = "没有可控制的播放实例，暂时无法加入队列。"
                 Return
             End If
 
-            Await OmniMixApiClient.AddToQueueAsync(CurrentBaseUrl, Instance.Id, SongInfo.Uuid)
+            If CanUseLiveInstanceApi(Instance) Then
+                Await OmniMixApiClient.AddToQueueAsync(CurrentBaseUrl, Instance.Id, SongInfo.Uuid)
+            Else
+                Await AddUuidsToOfflineProfileAsync(Instance.Id, New List(Of String) From {SongInfo.Uuid})
+            End If
+            Hint("Added to queue: " & NonEmpty(SongInfo.Title, SongInfo.Uuid), HintType.Green, False)
+            Await RefreshQueuePaneOrBackendAsync()
             LabLibrarySummary.Text = "已加入队列：" & NonEmpty(SongInfo.Title, SongInfo.Uuid)
         Catch Ex As Exception
             LabLibrarySummary.Text = "加入队列失败：" & Ex.Message
         End Try
     End Function
 
+    Private Shared Function CanUseLiveInstanceApi(Instance As OmniMixPlaybackInstanceInfo) As Boolean
+        Return Instance IsNot Nothing AndAlso Instance.IsServerManaged AndAlso Instance.Attached
+    End Function
+
+    Private Async Function GetTargetInstanceAsync() As Task(Of OmniMixPlaybackInstanceInfo)
+        If String.IsNullOrWhiteSpace(CurrentBaseUrl) Then Return Nothing
+
+        Dim Instances = Await OmniMixApiClient.GetInstancesAsync(CurrentBaseUrl)
+        Dim Config = Await OmniMixApiClient.GetConfigAsync(CurrentBaseUrl)
+        Return PickActiveInstance(Instances, ConfigString(Config, "active_instance", ""))
+    End Function
+
+    Private Async Function AddUuidsToOfflineProfileAsync(InstanceId As String, Uuids As IEnumerable(Of String)) As Task
+        If String.IsNullOrWhiteSpace(CurrentBaseUrl) OrElse String.IsNullOrWhiteSpace(InstanceId) Then Return
+
+        Dim CleanUuids = If(Uuids, Enumerable.Empty(Of String)()).
+            Where(Function(Uuid) Not String.IsNullOrWhiteSpace(Uuid)).
+            ToList()
+        If CleanUuids.Count = 0 Then Return
+
+        Dim ProfileJson As Dictionary(Of String, JsonElement) = Nothing
+        Try
+            ProfileJson = Await OmniMixApiClient.GetInstanceProfileAsync(CurrentBaseUrl, InstanceId)
+        Catch
+            ProfileJson = Nothing
+        End Try
+
+        Dim Profile = BuildMutableInstanceProfile(ProfileJson)
+        Dim Queue = GetMutableActiveQueue(Profile)
+        Dim SongUuids = GetMutableStringList(Queue, "SongUuids")
+        SongUuids.AddRange(CleanUuids)
+
+        Await OmniMixApiClient.UpdateInstanceProfileAsync(CurrentBaseUrl, InstanceId, Profile)
+        ActiveInstanceId = InstanceId
+    End Function
+
+    Private Shared Function BuildMutableInstanceProfile(ProfileJson As Dictionary(Of String, JsonElement)) As Dictionary(Of String, Object)
+        If ProfileJson Is Nothing OrElse ProfileJson.Count = 0 Then Return BuildDefaultInstanceProfile()
+
+        Dim ActiveQueueId = ProfileString(ProfileJson, "ActiveQueueId", "default")
+        Dim Queues As New List(Of Object)
+        Dim QueuesElement As JsonElement
+        If TryGetProfileElement(ProfileJson, "Queues", QueuesElement) AndAlso QueuesElement.ValueKind = JsonValueKind.Array Then
+            For Each QueueElement In QueuesElement.EnumerateArray()
+                If QueueElement.ValueKind <> JsonValueKind.Object Then Continue For
+                Queues.Add(BuildMutableQueue(QueueElement))
+            Next
+        End If
+
+        If Queues.Count = 0 Then
+            Dim DefaultProfile = BuildDefaultInstanceProfile()
+            Queues = DirectCast(DefaultProfile("Queues"), List(Of Object))
+        End If
+
+        If String.IsNullOrWhiteSpace(ActiveQueueId) Then
+            Dim FirstQueue = TryCast(Queues.FirstOrDefault(), Dictionary(Of String, Object))
+            ActiveQueueId = If(FirstQueue Is Nothing, "default", TryCast(FirstQueue("Id"), String))
+            If String.IsNullOrWhiteSpace(ActiveQueueId) Then ActiveQueueId = "default"
+        End If
+
+        Return New Dictionary(Of String, Object) From {
+            {"ActiveQueueId", ActiveQueueId},
+            {"Volume", ProfileDouble(ProfileJson, "Volume", 1.0)},
+            {"Queues", Queues}
+        }
+    End Function
+
+    Private Shared Function BuildMutableQueue(QueueElement As JsonElement) As Dictionary(Of String, Object)
+        Return New Dictionary(Of String, Object) From {
+            {"Id", JsonString(QueueElement, "Id", "default")},
+            {"Name", JsonString(QueueElement, "Name", "Default")},
+            {"PlaylistSources", JsonObjectList(QueueElement, "PlaylistSources")},
+            {"SongUuids", JsonStringList(QueueElement, "SongUuids")},
+            {"HistoryUuids", JsonStringList(QueueElement, "HistoryUuids")},
+            {"Index", JsonInteger(QueueElement, "Index", -1)},
+            {"HistoryPosition", JsonInteger(QueueElement, "HistoryPosition", -1)},
+            {"PlaylistPosition", JsonInteger(QueueElement, "PlaylistPosition", 0)},
+            {"Shuffle", JsonBoolean(QueueElement, "Shuffle", False)},
+            {"RepeatMode", JsonString(QueueElement, "RepeatMode", "none")}
+        }
+    End Function
+
+    Private Shared Function GetMutableActiveQueue(Profile As Dictionary(Of String, Object)) As Dictionary(Of String, Object)
+        Dim Queues = TryCast(Profile("Queues"), List(Of Object))
+        If Queues Is Nothing Then
+            Queues = New List(Of Object)
+            Profile("Queues") = Queues
+        End If
+
+        Dim ActiveQueueId = TryCast(Profile("ActiveQueueId"), String)
+        For Each QueueObject In Queues
+            Dim Queue = TryCast(QueueObject, Dictionary(Of String, Object))
+            If Queue IsNot Nothing AndAlso String.Equals(TryCast(Queue("Id"), String), ActiveQueueId, StringComparison.OrdinalIgnoreCase) Then Return Queue
+        Next
+
+        Dim FirstQueue = TryCast(Queues.FirstOrDefault(), Dictionary(Of String, Object))
+        If FirstQueue IsNot Nothing Then
+            Profile("ActiveQueueId") = TryCast(FirstQueue("Id"), String)
+            Return FirstQueue
+        End If
+
+        Dim CreatedQueue = DirectCast(BuildDefaultInstanceProfile()("Queues"), List(Of Object)).
+            OfType(Of Dictionary(Of String, Object))().
+            First()
+        Queues.Add(CreatedQueue)
+        Profile("ActiveQueueId") = "default"
+        Return CreatedQueue
+    End Function
+
+    Private Shared Function GetMutableStringList(Queue As Dictionary(Of String, Object), Key As String) As List(Of String)
+        Dim Value As Object = Nothing
+        If Queue IsNot Nothing AndAlso Queue.TryGetValue(Key, Value) Then
+            Dim Existing = TryCast(Value, List(Of String))
+            If Existing IsNot Nothing Then Return Existing
+        End If
+
+        Dim Created As New List(Of String)
+        If Queue IsNot Nothing Then Queue(Key) = Created
+        Return Created
+    End Function
+
+    Private Async Function LoadOfflineProfileQueueItemsAsync(BaseUrl As String, InstanceId As String, IsHistory As Boolean) As Task(Of List(Of OmniMixQueueItemInfo))
+        Dim ProfileJson = Await OmniMixApiClient.GetInstanceProfileAsync(BaseUrl, InstanceId)
+        Dim Profile = BuildMutableInstanceProfile(ProfileJson)
+        Dim Queue = GetMutableActiveQueue(Profile)
+        Dim Uuids = GetMutableStringList(Queue, If(IsHistory, "HistoryUuids", "SongUuids"))
+        Dim Result As New List(Of OmniMixQueueItemInfo)
+
+        For Index = 0 To Uuids.Count - 1
+            Dim Uuid = Uuids(Index)
+            Dim SongInfo = FindLibrarySongByUuid(Uuid)
+            Dim Item As New OmniMixQueueItemInfo With {
+                .Uuid = Uuid,
+                .Index = Index,
+                .Title = If(SongInfo Is Nothing, Uuid, NonEmpty(SongInfo.Title, Uuid)),
+                .Artist = If(SongInfo Is Nothing, "", SongInfo.Artist),
+                .AlbumId = If(SongInfo Is Nothing, "", SongInfo.AlbumId),
+                .Duration = If(SongInfo Is Nothing, 0, SongInfo.Duration),
+                .ModuleId = If(SongInfo Is Nothing, "", SongInfo.ModuleId),
+                .CoverPath = If(SongInfo Is Nothing, "", SongInfo.CoverPath),
+                .CoverUrl = If(SongInfo Is Nothing, "", SongInfo.CoverUrl),
+                .ImageUrl = If(SongInfo Is Nothing, "", SongInfo.ImageUrl)
+            }
+            Result.Add(Item)
+        Next
+
+        Return Result
+    End Function
+
+    Private Function FindLibrarySongByUuid(Uuid As String) As OmniMixSongInfo
+        If String.IsNullOrWhiteSpace(Uuid) Then Return Nothing
+
+        If CurrentLibraryPlaylist IsNot Nothing AndAlso CurrentLibraryPlaylist.Songs IsNot Nothing Then
+            Dim DirectSong = CurrentLibraryPlaylist.Songs.FirstOrDefault(Function(SongInfo) String.Equals(SongInfo.Uuid, Uuid, StringComparison.OrdinalIgnoreCase))
+            If DirectSong IsNot Nothing Then Return DirectSong
+        End If
+
+        For Each Pair In If(CurrentLibraryTagSongs, New Dictionary(Of String, List(Of OmniMixSongInfo))(StringComparer.OrdinalIgnoreCase))
+            If Pair.Value Is Nothing Then Continue For
+            Dim TagSong = Pair.Value.FirstOrDefault(Function(SongInfo) String.Equals(SongInfo.Uuid, Uuid, StringComparison.OrdinalIgnoreCase))
+            If TagSong IsNot Nothing Then Return TagSong
+        Next
+
+        Return Nothing
+    End Function
+
+    Private Shared Function TryGetProfileElement(ProfileJson As Dictionary(Of String, JsonElement), Key As String, ByRef Value As JsonElement) As Boolean
+        If ProfileJson Is Nothing Then Return False
+        For Each Pair In ProfileJson
+            If String.Equals(Pair.Key, Key, StringComparison.OrdinalIgnoreCase) Then
+                Value = Pair.Value
+                Return True
+            End If
+        Next
+        Return False
+    End Function
+
+    Private Shared Function TryGetJsonProperty(Element As JsonElement, Key As String, ByRef Value As JsonElement) As Boolean
+        If Element.ValueKind <> JsonValueKind.Object Then Return False
+        For Each PropertyInfo In Element.EnumerateObject()
+            If String.Equals(PropertyInfo.Name, Key, StringComparison.OrdinalIgnoreCase) Then
+                Value = PropertyInfo.Value
+                Return True
+            End If
+        Next
+        Return False
+    End Function
+
+    Private Shared Function ProfileString(ProfileJson As Dictionary(Of String, JsonElement), Key As String, Fallback As String) As String
+        Dim Value As JsonElement
+        If Not TryGetProfileElement(ProfileJson, Key, Value) Then Return Fallback
+        Return JsonElementString(Value, Fallback)
+    End Function
+
+    Private Shared Function ProfileDouble(ProfileJson As Dictionary(Of String, JsonElement), Key As String, Fallback As Double) As Double
+        Dim Value As JsonElement
+        If Not TryGetProfileElement(ProfileJson, Key, Value) Then Return Fallback
+        Return JsonElementDouble(Value, Fallback)
+    End Function
+
+    Private Shared Function JsonString(Element As JsonElement, Key As String, Fallback As String) As String
+        Dim Value As JsonElement
+        If Not TryGetJsonProperty(Element, Key, Value) Then Return Fallback
+        Return JsonElementString(Value, Fallback)
+    End Function
+
+    Private Shared Function JsonInteger(Element As JsonElement, Key As String, Fallback As Integer) As Integer
+        Dim Value As JsonElement
+        If Not TryGetJsonProperty(Element, Key, Value) Then Return Fallback
+        Select Case Value.ValueKind
+            Case JsonValueKind.Number
+                Dim Parsed As Integer
+                If Value.TryGetInt32(Parsed) Then Return Parsed
+            Case JsonValueKind.String
+                Dim Parsed As Integer
+                If Integer.TryParse(Value.GetString(), Parsed) Then Return Parsed
+        End Select
+        Return Fallback
+    End Function
+
+    Private Shared Function JsonBoolean(Element As JsonElement, Key As String, Fallback As Boolean) As Boolean
+        Dim Value As JsonElement
+        If Not TryGetJsonProperty(Element, Key, Value) Then Return Fallback
+        Select Case Value.ValueKind
+            Case JsonValueKind.True
+                Return True
+            Case JsonValueKind.False
+                Return False
+            Case JsonValueKind.String
+                Dim Parsed As Boolean
+                If Boolean.TryParse(Value.GetString(), Parsed) Then Return Parsed
+        End Select
+        Return Fallback
+    End Function
+
+    Private Shared Function JsonStringList(Element As JsonElement, Key As String) As List(Of String)
+        Dim Result As New List(Of String)
+        Dim Value As JsonElement
+        If Not TryGetJsonProperty(Element, Key, Value) OrElse Value.ValueKind <> JsonValueKind.Array Then Return Result
+        For Each Item In Value.EnumerateArray()
+            Dim Text = JsonElementString(Item, "")
+            If Not String.IsNullOrWhiteSpace(Text) Then Result.Add(Text)
+        Next
+        Return Result
+    End Function
+
+    Private Shared Function JsonObjectList(Element As JsonElement, Key As String) As List(Of Object)
+        Dim Result As New List(Of Object)
+        Dim Value As JsonElement
+        If Not TryGetJsonProperty(Element, Key, Value) OrElse Value.ValueKind <> JsonValueKind.Array Then Return Result
+        For Each Item In Value.EnumerateArray()
+            Result.Add(JsonElementToObject(Item))
+        Next
+        Return Result
+    End Function
+
+    Private Shared Function JsonElementString(Element As JsonElement, Fallback As String) As String
+        Select Case Element.ValueKind
+            Case JsonValueKind.String
+                Return NonEmpty(Element.GetString(), Fallback)
+            Case JsonValueKind.Number, JsonValueKind.True, JsonValueKind.False
+                Return Element.ToString()
+            Case Else
+                Return Fallback
+        End Select
+    End Function
+
+    Private Shared Function JsonElementDouble(Element As JsonElement, Fallback As Double) As Double
+        Select Case Element.ValueKind
+            Case JsonValueKind.Number
+                Dim Parsed As Double
+                If Element.TryGetDouble(Parsed) Then Return Parsed
+            Case JsonValueKind.String
+                Dim Parsed As Double
+                If Double.TryParse(Element.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, Parsed) Then Return Parsed
+        End Select
+        Return Fallback
+    End Function
+
+    Private Shared Function JsonElementToObject(Element As JsonElement) As Object
+        Select Case Element.ValueKind
+            Case JsonValueKind.Object
+                Dim Result As New Dictionary(Of String, Object)(StringComparer.OrdinalIgnoreCase)
+                For Each PropertyInfo In Element.EnumerateObject()
+                    Result(PropertyInfo.Name) = JsonElementToObject(PropertyInfo.Value)
+                Next
+                Return Result
+            Case JsonValueKind.Array
+                Dim Result As New List(Of Object)
+                For Each Item In Element.EnumerateArray()
+                    Result.Add(JsonElementToObject(Item))
+                Next
+                Return Result
+            Case JsonValueKind.String
+                Return Element.GetString()
+            Case JsonValueKind.Number
+                Dim LongValue As Long
+                If Element.TryGetInt64(LongValue) Then Return LongValue
+                Dim DoubleValue As Double
+                If Element.TryGetDouble(DoubleValue) Then Return DoubleValue
+                Return Element.ToString()
+            Case JsonValueKind.True
+                Return True
+            Case JsonValueKind.False
+                Return False
+            Case Else
+                Return Nothing
+        End Select
+    End Function
+
     Private Async Function GetControllableInstanceAsync() As Task(Of OmniMixPlaybackInstanceInfo)
         If String.IsNullOrWhiteSpace(CurrentBaseUrl) Then Return Nothing
 
         Dim Instances = Await OmniMixApiClient.GetInstancesAsync(CurrentBaseUrl)
-        If Instances Is Nothing OrElse Instances.Count = 0 Then Return Nothing
-
         Dim Config = Await OmniMixApiClient.GetConfigAsync(CurrentBaseUrl)
         Dim ActiveId = ConfigString(Config, "active_instance", "")
-        Dim Active = If(String.IsNullOrWhiteSpace(ActiveId), Nothing, Instances.FirstOrDefault(Function(Instance) Instance.Id = ActiveId AndAlso Instance.IsServerManaged))
+        Dim Active = If(String.IsNullOrWhiteSpace(ActiveId), Nothing, Instances.FirstOrDefault(Function(Instance) String.Equals(Instance.Id, ActiveId, StringComparison.OrdinalIgnoreCase) AndAlso CanUseLiveInstanceApi(Instance)))
         If Active IsNot Nothing Then Return Active
 
-        Return PickActiveInstance(Instances)
+        Dim OnlineServer = If(Instances, New List(Of OmniMixPlaybackInstanceInfo)).
+            FirstOrDefault(Function(Instance) CanUseLiveInstanceApi(Instance))
+        If OnlineServer IsNot Nothing Then Return OnlineServer
+
+        Return Nothing
     End Function
 
     Private Function PromptEqualizerNumber(Title As String, Description As String, DefaultValue As Double, MinValue As Double, MaxValue As Double, ByRef Result As Double) As Boolean

@@ -66,8 +66,12 @@ Friend Module ModSecret
 
     Public Sub ThemeRefresh(Optional NewTheme As Integer = -1)
         Try
+            If NewTheme < 0 Then
+                NewTheme = Settings.Get(Of Integer)("UiLauncherTheme")
+            End If
             If ThemeNow = NewTheme AndAlso NewTheme >= 0 Then Return
-            If NewTheme >= 0 Then ThemeNow = NewTheme
+            ThemeNow = NewTheme
+            ApplyThemePalette(ThemeNow)
 
             Color1 = New MyColor().FromHSL2(ColorHue, ColorSat * 0.2, 25 + ColorLightAdjust * 0.3)
             Color2 = New MyColor().FromHSL2(ColorHue, ColorSat, 45 + ColorLightAdjust)
@@ -105,6 +109,72 @@ Friend Module ModSecret
         Catch ex As Exception
             Logger.Error(ex, "刷新主题颜色失败", LogBehavior.Toast)
         End Try
+    End Sub
+
+    Private Sub ApplyThemePalette(ThemeId As Integer)
+        ColorHueTopbarDelta = 0
+        Select Case ThemeId
+            Case 1
+                ColorHue = 175
+                ColorSat = 72
+                ColorLightAdjust = 1
+                ColorHueTopbarDelta = 8
+            Case 2
+                ColorHue = 122
+                ColorSat = 72
+                ColorLightAdjust = 0
+            Case 3
+                ColorHue = 48
+                ColorSat = 90
+                ColorLightAdjust = 3
+            Case 4
+                ColorHue = 28
+                ColorSat = 62
+                ColorLightAdjust = -1
+            Case 5
+                ColorHue = 215
+                ColorSat = 18
+                ColorLightAdjust = -18
+            Case 6
+                ColorHue = 330
+                ColorSat = 72
+                ColorLightAdjust = 0
+            Case 7
+                ColorHue = 272
+                ColorSat = 78
+                ColorLightAdjust = -1
+            Case 8
+                ColorHue = 43
+                ColorSat = 76
+                ColorLightAdjust = 0
+            Case 9
+                ColorHue = 24
+                ColorSat = 86
+                ColorLightAdjust = 0
+            Case 10
+                ColorHue = 355
+                ColorSat = 78
+                ColorLightAdjust = -1
+            Case 11
+                ColorHue = 198
+                ColorSat = 92
+                ColorLightAdjust = -2
+                ColorHueTopbarDelta = 12
+            Case 12, 13
+                ColorHue = 292
+                ColorSat = 82
+                ColorLightAdjust = 0
+                ColorHueTopbarDelta = New Integer() {-70, 0, 70}
+            Case 14
+                ColorHue = Settings.Get(Of Integer)("UiLauncherThemeHue")
+                ColorSat = Settings.Get(Of Integer)("UiLauncherThemeSat")
+                ColorLightAdjust = Settings.Get(Of Integer)("UiLauncherThemeLight")
+            Case Else
+                ColorHue = 210
+                ColorSat = 85
+                ColorLightAdjust = 0
+                ColorHueTopbarDelta = 0
+        End Select
     End Sub
     Public Sub ThemeRefreshMain()
         RunInUi(

@@ -4,26 +4,10 @@ Imports System.IO
 Public Module OmniMixBackendManager
 
     Private Const BackendExeName As String = "OmniMixPlayer.Backend.exe"
-    Private HasForcedBackendRestart As Boolean = False
-
     Public Async Function EnsureStartedAsync() As Task(Of OmniMixBackendStatus)
         Dim BackendPath = FindBackendExe()
         Dim Status = Await OmniMixApiClient.DiscoverAsync()
         If Status.IsOnline Then
-            If Not HasForcedBackendRestart AndAlso Not String.IsNullOrWhiteSpace(BackendPath) Then
-                HasForcedBackendRestart = True
-                Try
-                    Await OmniMixApiClient.StopBackendAsync(Status.BaseUrl)
-                    For i = 0 To 9
-                        Await Task.Delay(300)
-                        Status = Await OmniMixApiClient.DiscoverAsync()
-                        If Not Status.IsOnline Then Exit For
-                    Next
-                Catch
-                End Try
-                Status = Await OmniMixApiClient.DiscoverAsync()
-                If Not Status.IsOnline Then GoTo StartBundledBackend
-            End If
             Status.Message = "已发现正在运行的 OmniMix 后端。"
             Return Status
         End If
@@ -37,7 +21,7 @@ StartBundledBackend:
         End If
 
         Try
-            Dim GuiDir = AppContext.BaseDirectory.TrimEnd("\"c, "/"c)
+            Dim GuiDir = PathExeFolder.TrimEnd("\"c, "/"c)
             StartProcess(New ProcessStartInfo With {
                 .FileName = BackendPath,
                 .Arguments = $"--port-file-dir=""{GuiDir}""",
@@ -109,11 +93,10 @@ StartBundledBackend:
 
     Public Sub SetConfiguredBackendPath(BackendPath As String)
         Settings.Set("OmniMixBackendPath", If(BackendPath, "").Trim())
-        HasForcedBackendRestart = False
     End Sub
 
     Private Function GetBackendExeCandidates() As IEnumerable(Of String)
-        Dim BaseDir = AppContext.BaseDirectory
+        Dim BaseDir = PathExeFolder
         Return New List(Of String) From {
             Path.Combine(BaseDir, "..", "..", "..", "..", "..", "bin", "Backend", "win-x64", BackendExeName),
             Path.Combine(BaseDir, BackendExeName),

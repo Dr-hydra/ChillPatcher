@@ -1,6 +1,7 @@
 Imports System.Diagnostics
 Imports System.IO.Compression
 Imports System.Security.Cryptography
+Imports System.Text
 Imports Newtonsoft.Json
 
 Public Enum OmniMixBepInExStatus
@@ -44,6 +45,7 @@ Public Class OmniMixModDeclaration
     Public Property RootFilesToLink As List(Of String) = New List(Of String)
     Public Property RootDirsToLink As List(Of String) = New List(Of String)
     Public Property RootFilesNoBackup As List(Of String) = New List(Of String)
+    Public Property CopyRootFiles As Boolean = False
     Public Property Mode As String = ""
 
     Public ReadOnly Property UsesFramework As Boolean
@@ -64,6 +66,7 @@ Public Module OmniMixModDeploymentService
     Private Const BepInExArchiveName As String = "BepInEx_win_x64_5.4.23.5.zip"
     Private Const InstanceMarkerName As String = ".omnimix_instance_id"
     Private Const PortFileName As String = "omnimix_port.txt"
+    Private ReadOnly PlainUtf8 As New UTF8Encoding(False)
 
     Private ReadOnly JsonSettings As New JsonSerializerSettings With {.Formatting = Formatting.Indented}
 
@@ -123,6 +126,7 @@ Public Module OmniMixModDeploymentService
                 .FolderName = "fh6-omnimix",
                 .RootFilesToLink = New List(Of String) From {"version.dll", "OmniPcmShared.dll"},
                 .RootFilesNoBackup = New List(Of String) From {"version.dll", "OmniPcmShared.dll"},
+                .CopyRootFiles = True,
                 .Mode = "server"
             }
         }
@@ -226,14 +230,19 @@ Public Module OmniMixModDeploymentService
     Public Function ResolveAssetPath(ArchiveName As String) As String
         If String.IsNullOrWhiteSpace(ArchiveName) Then Return ""
 
-        Dim BaseDir = AppContext.BaseDirectory
+        Dim BaseDir = PathExeFolder
         Dim Candidates As New List(Of String) From {
             Path.Combine(BaseDir, "OmniMixAssets", ArchiveName),
             Path.Combine(BaseDir, "assets", ArchiveName),
+            Path.Combine(BaseDir, "data", "flutter_assets", "assets", ArchiveName),
+            Path.Combine(BaseDir, "wwwroot", "assets", "assets", ArchiveName),
+            Path.Combine(BaseDir, "wwwroot", "assets", ArchiveName),
             Path.Combine(BaseDir, ArchiveName)
         }
 
         Try
+            Candidates.Add(Path.GetFullPath(Path.Combine(BaseDir, "..", "data", "flutter_assets", "assets", ArchiveName)))
+            Candidates.Add(Path.GetFullPath(Path.Combine(BaseDir, "..", "wwwroot", "assets", "assets", ArchiveName)))
             Candidates.Add(Path.GetFullPath(Path.Combine(BaseDir, "..", "..", "..", "..", "..", "gui_flutter", "assets", ArchiveName)))
             Candidates.Add(Path.GetFullPath(Path.Combine(BaseDir, "..", "..", "..", "..", "..", "..", "gui_flutter", "assets", ArchiveName)))
         Catch
@@ -368,8 +377,12 @@ Public Module OmniMixModDeploymentService
                 AddLog(Logs, "  Placed plugin directory: " & ModInfo.FolderName)
             End If
 
-            Dim InstanceId = ReadInstanceId(GamePath)
-            If String.IsNullOrWhiteSpace(InstanceId) Then InstanceId = GenerateInstanceId(GamePath, ModInfo.Id)
+            Dim InstanceId = GetExpectedInstanceId(GamePath, ModInfo)
+            Dim ExistingInstanceId = ReadInstanceId(GamePath)
+            If Not String.IsNullOrWhiteSpace(ExistingInstanceId) AndAlso
+               Not String.Equals(ExistingInstanceId, InstanceId, StringComparison.OrdinalIgnoreCase) Then
+                AddLog(Logs, "  Rewriting stale instance marker: " & ExistingInstanceId & " -> " & InstanceId)
+            End If
             WriteInstanceId(GamePath, InstanceId)
             If BackendPort > 0 Then WritePortFile(GamePath, BackendPort)
             AddLog(Logs, ModInfo.Name & " deployment completed. Instance: " & InstanceId)
@@ -412,7 +425,7 @@ Public Module OmniMixModDeploymentService
     Public Function ReadInstanceId(GamePath As String) As String
         Try
             Dim MarkerPath = Path.Combine(GamePath, InstanceMarkerName)
-            If File.Exists(MarkerPath) Then Return File.ReadAllText(MarkerPath, Encoding.UTF8).Trim()
+            If File.Exists(MarkerPath) Then Return CleanInstanceId(File.ReadAllText(MarkerPath, PlainUtf8))
         Catch
         End Try
         Return ""
@@ -420,10 +433,32 @@ Public Module OmniMixModDeploymentService
 
     Public Sub WritePortFile(GamePath As String, BackendPort As Integer)
         Try
-            File.WriteAllText(Path.Combine(GamePath, PortFileName), BackendPort.ToString(), Encoding.UTF8)
+            File.WriteAllText(Path.Combine(GamePath, PortFileName), BackendPort.ToString(), PlainUtf8)
         Catch
         End Try
     End Sub
+
+    Public Function GetExpectedInstanceId(GamePath As String, ModInfo As OmniMixModDeclaration) As String
+        If ModInfo Is Nothing Then Return ""
+        Return GenerateInstanceId(GamePath, ModInfo.Id)
+    End Function
+
+    Public Function EnsureRuntimeBinding(GamePath As String, ModInfo As OmniMixModDeclaration, BackendPort As Integer, Logs As List(Of String)) As String
+        If String.IsNullOrWhiteSpace(GamePath) OrElse ModInfo Is Nothing Then Return ""
+        If CheckModStatus(GamePath, ModInfo) <> OmniMixModInstallStatus.Installed Then Return ""
+
+        Dim ExpectedInstanceId = GetExpectedInstanceId(GamePath, ModInfo)
+        Dim ExistingInstanceId = ReadInstanceId(GamePath)
+        If Not String.Equals(ExistingInstanceId, ExpectedInstanceId, StringComparison.OrdinalIgnoreCase) Then
+            WriteInstanceId(GamePath, ExpectedInstanceId)
+            AddLog(Logs, "  Fixed instance marker: " & If(String.IsNullOrWhiteSpace(ExistingInstanceId), "(missing)", ExistingInstanceId) & " -> " & ExpectedInstanceId)
+        End If
+        If BackendPort > 0 Then
+            WritePortFile(GamePath, BackendPort)
+            AddLog(Logs, "  Updated game port file: " & BackendPort)
+        End If
+        Return ExpectedInstanceId
+    End Function
 
     Public Sub DeletePortFile(GamePath As String)
         Try
@@ -470,7 +505,11 @@ Public Module OmniMixModDeploymentService
                 File.Copy(LinkPath, BackupPath, True)
                 AddLog(Logs, "  Backed up existing file: " & RelativeFile)
             End If
-            If Not CreateFileLinkOrCopy(LinkPath, TargetPath) Then Return False
+            If ModInfo.CopyRootFiles Then
+                CreateFileCopy(LinkPath, TargetPath)
+            ElseIf Not CreateFileLinkOrCopy(LinkPath, TargetPath) Then
+                Return False
+            End If
             AddLog(Logs, "  Placed root file: " & RelativeFile)
         Next
 
@@ -535,6 +574,12 @@ Public Module OmniMixModDeploymentService
         File.Copy(TargetPath, LinkPath, True)
         Return True
     End Function
+
+    Private Sub CreateFileCopy(LinkPath As String, TargetPath As String)
+        DeletePathSafely(LinkPath)
+        Directory.CreateDirectory(Path.GetDirectoryName(LinkPath))
+        File.Copy(TargetPath, LinkPath, True)
+    End Sub
 
     Private Function CreateDirectoryLinkOrCopy(LinkPath As String, TargetPath As String) As Boolean
         DeletePathSafely(LinkPath)
@@ -605,7 +650,7 @@ Public Module OmniMixModDeploymentService
 
     Private Sub WriteInstanceId(GamePath As String, InstanceId As String)
         Try
-            File.WriteAllText(Path.Combine(GamePath, InstanceMarkerName), InstanceId, Encoding.UTF8)
+            File.WriteAllText(Path.Combine(GamePath, InstanceMarkerName), CleanInstanceId(InstanceId), PlainUtf8)
         Catch
         End Try
     End Sub
@@ -626,6 +671,21 @@ Public Module OmniMixModDeploymentService
             Dim Token = BitConverter.ToString(Hash).Replace("-", "").ToLowerInvariant().Substring(0, 12)
             Return Prefix & "_" & Token
         End Using
+    End Function
+
+    Private Function CleanInstanceId(Value As String) As String
+        If String.IsNullOrWhiteSpace(Value) Then Return ""
+        Dim Raw = Value.Trim().Trim(ChrW(&HFEFF), ChrW(0))
+        Dim Builder As New StringBuilder(Raw.Length)
+        For Each Character In Raw
+            If (Character >= "a"c AndAlso Character <= "z"c) OrElse
+               (Character >= "A"c AndAlso Character <= "Z"c) OrElse
+               (Character >= "0"c AndAlso Character <= "9"c) OrElse
+               Character = "_"c OrElse Character = "-"c OrElse Character = "."c Then
+                Builder.Append(Character)
+            End If
+        Next
+        Return Builder.ToString()
     End Function
 
     Private Function Quote(Value As String) As String

@@ -67,7 +67,7 @@
 
     '识别码/土豆码替代入口
     Private Sub BtnSystemIdentify_Click(sender As Object, e As MouseButtonEventArgs) Handles BtnSystemIdentify.Click
-        PageOtherAbout.CopyIdentify()
+        ClipboardSet(Identify)
     End Sub
     Private Sub BtnSystemUnlock_Click(sender As Object, e As MouseButtonEventArgs) Handles BtnSystemUnlock.Click
         InputPotatoCode(False)

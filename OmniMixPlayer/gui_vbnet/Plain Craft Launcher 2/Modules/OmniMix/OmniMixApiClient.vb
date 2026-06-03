@@ -1,4 +1,5 @@
 Imports System.Net.Http
+Imports System.Net
 Imports System.Text
 Imports System.Text.Json
 Imports System.Text.Json.Serialization
@@ -169,8 +170,25 @@ End Class
 
 Public Class OmniMixRawNodeData
     Public Property Id As String = ""
+    Private _NodeType As String = ""
     <JsonPropertyName("node-type")>
-    Public Property NodeType As String = ""
+    Public Property NodeType As String
+        Get
+            Return _NodeType
+        End Get
+        Set(value As String)
+            _NodeType = If(value, "")
+        End Set
+    End Property
+    <JsonPropertyName("nodeType")>
+    Public Property NodeTypeCamel As String
+        Get
+            Return _NodeType
+        End Get
+        Set(value As String)
+            If Not String.IsNullOrWhiteSpace(value) Then _NodeType = value
+        End Set
+    End Property
     Public Property Text As String = ""
     <JsonPropertyName("font-size")>
     Public Property FontSize As Double = 14
@@ -246,14 +264,27 @@ Public Module OmniMixApiClient
         Return If(Playlist, New OmniMixPlaylistData)
     End Function
 
+    Public Async Function GetSongsAsync(BaseUrl As String, Optional AlbumId As String = "", Optional TagId As String = "") As Task(Of List(Of OmniMixSongInfo))
+        Dim Query As New List(Of String)
+        If Not String.IsNullOrWhiteSpace(AlbumId) Then Query.Add("albumId=" & Uri.EscapeDataString(AlbumId))
+        If Not String.IsNullOrWhiteSpace(TagId) Then Query.Add("tagId=" & Uri.EscapeDataString(TagId))
+        Dim ApiPath = "/api/songs" & If(Query.Count = 0, "", "?" & String.Join("&", Query))
+        Dim Songs = Await GetJsonAsync(Of List(Of OmniMixSongInfo))(BaseUrl, ApiPath)
+        Return If(Songs, New List(Of OmniMixSongInfo))
+    End Function
+
     Public Async Function GetInstancesAsync(BaseUrl As String) As Task(Of List(Of OmniMixPlaybackInstanceInfo))
         Dim Instances = Await GetJsonAsync(Of List(Of OmniMixPlaybackInstanceInfo))(BaseUrl, "/api/instances")
         Return If(Instances, New List(Of OmniMixPlaybackInstanceInfo))
     End Function
 
     Public Async Function GetInstanceStatsAsync(BaseUrl As String) As Task(Of OmniMixInstanceStatsInfo)
-        Dim Stats = Await GetJsonAsync(Of OmniMixInstanceStatsInfo)(BaseUrl, "/api/instances/stats")
-        Return If(Stats, New OmniMixInstanceStatsInfo)
+        Try
+            Dim Stats = Await GetJsonAsync(Of OmniMixInstanceStatsInfo)(BaseUrl, "/api/instances/stats")
+            Return If(Stats, New OmniMixInstanceStatsInfo)
+        Catch Ex As Exception When IsOptionalEndpointMissing(Ex)
+            Return New OmniMixInstanceStatsInfo
+        End Try
     End Function
 
     Public Async Function GetInstanceQueueAsync(BaseUrl As String, InstanceId As String) As Task(Of List(Of OmniMixQueueItemInfo))
@@ -262,8 +293,12 @@ Public Module OmniMixApiClient
     End Function
 
     Public Async Function GetPlaylistSourcesAsync(BaseUrl As String, InstanceId As String) As Task(Of List(Of OmniMixPlaylistSourceInfo))
-        Dim Sources = Await GetJsonAsync(Of List(Of OmniMixPlaylistSourceInfo))(BaseUrl, "/api/instances/" & Uri.EscapeDataString(InstanceId) & "/playlist/sources")
-        Return If(Sources, New List(Of OmniMixPlaylistSourceInfo))
+        Try
+            Dim Sources = Await GetJsonAsync(Of List(Of OmniMixPlaylistSourceInfo))(BaseUrl, "/api/instances/" & Uri.EscapeDataString(InstanceId) & "/playlist/sources")
+            Return If(Sources, New List(Of OmniMixPlaylistSourceInfo))
+        Catch Ex As Exception When IsOptionalEndpointMissing(Ex)
+            Return New List(Of OmniMixPlaylistSourceInfo)
+        End Try
     End Function
 
     Public Async Function AddPlaylistSourceAsync(BaseUrl As String, InstanceId As String, SourceId As String, SourceName As String, Uuids As IEnumerable(Of String)) As Task
@@ -282,8 +317,12 @@ Public Module OmniMixApiClient
     End Function
 
     Public Async Function GetInstanceHistoryAsync(BaseUrl As String, InstanceId As String) As Task(Of List(Of OmniMixQueueItemInfo))
-        Dim History = Await GetJsonAsync(Of List(Of OmniMixQueueItemInfo))(BaseUrl, "/api/instances/" & Uri.EscapeDataString(InstanceId) & "/history")
-        Return If(History, New List(Of OmniMixQueueItemInfo))
+        Try
+            Dim History = Await GetJsonAsync(Of List(Of OmniMixQueueItemInfo))(BaseUrl, "/api/instances/" & Uri.EscapeDataString(InstanceId) & "/history")
+            Return If(History, New List(Of OmniMixQueueItemInfo))
+        Catch Ex As Exception When IsOptionalEndpointMissing(Ex)
+            Return New List(Of OmniMixQueueItemInfo)
+        End Try
     End Function
 
     Public Async Function ConnectControllerAsync(BaseUrl As String, Optional ClientId As String = "vbnet-gui") As Task
@@ -301,9 +340,14 @@ Public Module OmniMixApiClient
     End Function
 
     Public Async Function AddToQueueAsync(BaseUrl As String, InstanceId As String, Uuid As String) As Task
-        Await PostJsonAsync(BaseUrl, "/api/instances/" & Uri.EscapeDataString(InstanceId) & "/queue", New With {
-            .uuid = If(Uuid, "")
-        })
+        If String.IsNullOrWhiteSpace(Uuid) Then Return
+        Dim UseInsertFallback = False
+        Try
+            Await PostQueueSingleAsync(BaseUrl, InstanceId, Uuid)
+        Catch Ex As Exception When IsEndpointUnsupported(Ex)
+            UseInsertFallback = True
+        End Try
+        If UseInsertFallback Then Await PostQueueInsertAsync(BaseUrl, InstanceId, New String() {Uuid})
     End Function
 
     Public Async Function AddToQueueRangeAsync(BaseUrl As String, InstanceId As String, Uuids As IEnumerable(Of String)) As Task
@@ -313,6 +357,27 @@ Public Module OmniMixApiClient
             ToArray()
         If SongUuids.Length = 0 Then Return
 
+        Dim UseSingleFallback = False
+        Try
+            Await PostQueueInsertAsync(BaseUrl, InstanceId, SongUuids)
+        Catch Ex As Exception When IsEndpointUnsupported(Ex)
+            UseSingleFallback = True
+        End Try
+        If UseSingleFallback Then
+            For Each SongUuid In SongUuids
+                Await PostQueueSingleAsync(BaseUrl, InstanceId, SongUuid)
+            Next
+        End If
+    End Function
+
+    Private Async Function PostQueueSingleAsync(BaseUrl As String, InstanceId As String, Uuid As String) As Task
+        Await PostJsonAsync(BaseUrl, "/api/instances/" & Uri.EscapeDataString(InstanceId) & "/queue", New With {
+            .uuid = If(Uuid, "")
+        })
+    End Function
+
+    Private Async Function PostQueueInsertAsync(BaseUrl As String, InstanceId As String, Uuids As IEnumerable(Of String)) As Task
+        Dim SongUuids = If(Uuids, Enumerable.Empty(Of String)()).ToArray()
         Await PostJsonAsync(BaseUrl, "/api/instances/" & Uri.EscapeDataString(InstanceId) & "/queue/insert", New With {
             .uuids = SongUuids,
             .index = Integer.MaxValue
@@ -384,8 +449,12 @@ Public Module OmniMixApiClient
     End Function
 
     Public Async Function GetInstanceEqualizerAsync(BaseUrl As String, InstanceId As String) As Task(Of OmniMixEqualizerStateInfo)
-        Dim State = Await GetJsonAsync(Of OmniMixEqualizerStateInfo)(BaseUrl, "/api/instances/" & Uri.EscapeDataString(InstanceId) & "/equalizer")
-        Return If(State, New OmniMixEqualizerStateInfo)
+        Try
+            Dim State = Await GetJsonAsync(Of OmniMixEqualizerStateInfo)(BaseUrl, "/api/instances/" & Uri.EscapeDataString(InstanceId) & "/equalizer")
+            Return If(State, New OmniMixEqualizerStateInfo)
+        Catch Ex As Exception When IsOptionalEndpointMissing(Ex)
+            Return New OmniMixEqualizerStateInfo
+        End Try
     End Function
 
     Public Async Function PutInstanceEqualizerAsync(BaseUrl As String, InstanceId As String, State As OmniMixEqualizerStateInfo) As Task
@@ -393,8 +462,12 @@ Public Module OmniMixApiClient
     End Function
 
     Public Async Function GetInstanceEqualizerPresetsAsync(BaseUrl As String, InstanceId As String) As Task(Of Dictionary(Of String, OmniMixEqualizerStateInfo))
-        Dim Presets = Await GetJsonAsync(Of Dictionary(Of String, OmniMixEqualizerStateInfo))(BaseUrl, "/api/instances/" & Uri.EscapeDataString(InstanceId) & "/equalizer/presets")
-        Return If(Presets, New Dictionary(Of String, OmniMixEqualizerStateInfo))
+        Try
+            Dim Presets = Await GetJsonAsync(Of Dictionary(Of String, OmniMixEqualizerStateInfo))(BaseUrl, "/api/instances/" & Uri.EscapeDataString(InstanceId) & "/equalizer/presets")
+            Return If(Presets, New Dictionary(Of String, OmniMixEqualizerStateInfo))
+        Catch Ex As Exception When IsOptionalEndpointMissing(Ex)
+            Return New Dictionary(Of String, OmniMixEqualizerStateInfo)
+        End Try
     End Function
 
     Public Async Function GetConfigAsync(BaseUrl As String) As Task(Of Dictionary(Of String, JsonElement))
@@ -411,37 +484,41 @@ Public Module OmniMixApiClient
     End Function
 
     Public Async Function AddPortFileDirAsync(BaseUrl As String, DirectoryPath As String) As Task
-        If String.IsNullOrWhiteSpace(BaseUrl) OrElse String.IsNullOrWhiteSpace(DirectoryPath) Then Return
-
-        Dim FullPath As String
         Try
-            FullPath = Path.GetFullPath(DirectoryPath)
-        Catch
-            FullPath = DirectoryPath.Trim()
-        End Try
+            If String.IsNullOrWhiteSpace(BaseUrl) OrElse String.IsNullOrWhiteSpace(DirectoryPath) Then Return
 
-        Dim Config = Await GetConfigAsync(BaseUrl)
-        Dim Dirs As New List(Of String)
-        Dim Existing As JsonElement
-        If Config.TryGetValue("port_file_dirs", Existing) Then
-            If Existing.ValueKind = JsonValueKind.Array Then
-                For Each Item In Existing.EnumerateArray()
-                    If Item.ValueKind = JsonValueKind.String AndAlso Not String.IsNullOrWhiteSpace(Item.GetString()) Then
-                        Dirs.Add(Item.GetString())
-                    End If
-                Next
-            ElseIf Existing.ValueKind = JsonValueKind.String AndAlso Not String.IsNullOrWhiteSpace(Existing.GetString()) Then
-                Dirs.Add(Existing.GetString())
+            Dim FullPath As String
+            Try
+                FullPath = Path.GetFullPath(DirectoryPath)
+            Catch
+                FullPath = DirectoryPath.Trim()
+            End Try
+
+            Dim Config = Await GetConfigAsync(BaseUrl)
+            Dim Dirs As New List(Of String)
+            Dim Existing As JsonElement
+            If Config.TryGetValue("port_file_dirs", Existing) Then
+                If Existing.ValueKind = JsonValueKind.Array Then
+                    For Each Item In Existing.EnumerateArray()
+                        If Item.ValueKind = JsonValueKind.String AndAlso Not String.IsNullOrWhiteSpace(Item.GetString()) Then
+                            Dirs.Add(Item.GetString())
+                        End If
+                    Next
+                ElseIf Existing.ValueKind = JsonValueKind.String AndAlso Not String.IsNullOrWhiteSpace(Existing.GetString()) Then
+                    Dirs.Add(Existing.GetString())
+                End If
             End If
-        End If
 
-        If Dirs.Any(Function(Item) ArePathsEqual(Item, FullPath)) Then Return
-        Dirs.Add(FullPath)
+            If Dirs.Any(Function(Item) ArePathsEqual(Item, FullPath)) Then Return
+            Dirs.Add(FullPath)
 
-        Await PutConfigRawAsync(BaseUrl, New Dictionary(Of String, Object) From {
-            {"port_file_dirs", Dirs.ToArray()}
-        })
-        Await SaveConfigAsync(BaseUrl)
+            Await PutConfigRawAsync(BaseUrl, New Dictionary(Of String, Object) From {
+                {"port_file_dirs", Dirs.ToArray()}
+            })
+            Await SaveConfigAsync(BaseUrl)
+        Catch Ex As Exception
+            Logger.Warn(Ex, "同步 OmniMix 端口文件目录失败，将继续使用游戏目录内的端口文件")
+        End Try
     End Function
 
     Public Async Function StopBackendAsync(BaseUrl As String) As Task
@@ -456,8 +533,12 @@ Public Module OmniMixApiClient
     End Function
 
     Public Async Function GetArchivesAsync(BaseUrl As String) As Task(Of List(Of OmniMixArchiveInfo))
-        Dim Archives = Await GetJsonAsync(Of List(Of OmniMixArchiveInfo))(BaseUrl, "/api/instances/archives")
-        Return If(Archives, New List(Of OmniMixArchiveInfo))
+        Try
+            Dim Archives = Await GetJsonAsync(Of List(Of OmniMixArchiveInfo))(BaseUrl, "/api/instances/archives")
+            Return If(Archives, New List(Of OmniMixArchiveInfo))
+        Catch Ex As Exception When IsOptionalEndpointMissing(Ex)
+            Return New List(Of OmniMixArchiveInfo)
+        End Try
     End Function
 
     Public Async Function DeleteInstanceAsync(BaseUrl As String, InstanceId As String) As Task
@@ -474,6 +555,11 @@ Public Module OmniMixApiClient
 
     Public Async Function UpdateInstanceProfileAsync(BaseUrl As String, InstanceId As String, Profile As Dictionary(Of String, Object)) As Task
         Await PutJsonAsync(BaseUrl, "/api/instances/" & Uri.EscapeDataString(InstanceId) & "/profile", If(Profile, New Dictionary(Of String, Object)))
+    End Function
+
+    Public Async Function GetInstanceProfileAsync(BaseUrl As String, InstanceId As String) As Task(Of Dictionary(Of String, JsonElement))
+        Dim Profile = Await GetJsonAsync(Of Dictionary(Of String, JsonElement))(BaseUrl, "/api/instances/" & Uri.EscapeDataString(InstanceId) & "/profile")
+        Return If(Profile, New Dictionary(Of String, JsonElement))
     End Function
 
     Public Async Function ArchiveInstanceAsync(BaseUrl As String, InstanceId As String, Label As String) As Task
@@ -517,7 +603,15 @@ Public Module OmniMixApiClient
     End Function
 
     Public Async Function GetModuleSettingsUiAsync(BaseUrl As String, ModuleId As String) As Task(Of OmniMixRawNodeData)
-        Return Await GetJsonAsync(Of OmniMixRawNodeData)(BaseUrl, "/api/modules/" & Uri.EscapeDataString(ModuleId) & "/settings")
+        Dim FallbackToMainUi = False
+        Try
+            Return Await GetJsonAsync(Of OmniMixRawNodeData)(BaseUrl, "/api/modules/" & Uri.EscapeDataString(ModuleId) & "/settings")
+        Catch Ex As Exception When IsOptionalEndpointMissing(Ex)
+            Logger.Warn(Ex, "模块设置接口不存在，回退到模块主 UI：" & ModuleId)
+            FallbackToMainUi = True
+        End Try
+        If FallbackToMainUi Then Return Await GetModuleUiAsync(BaseUrl, ModuleId)
+        Return New OmniMixRawNodeData With {.NodeType = "Text", .Text = "No module settings UI available"}
     End Function
 
     Public Async Function GetModuleLinkUiAsync(BaseUrl As String, ModuleId As String, LinkId As String) As Task(Of OmniMixRawNodeData)
@@ -619,7 +713,7 @@ Public Module OmniMixApiClient
 
     Private Function GetPortFileDirs() As IEnumerable(Of String)
         Dim Dirs As New List(Of String) From {
-            AppContext.BaseDirectory,
+            PathExeFolder,
             Path.GetTempPath()
         }
 
@@ -635,6 +729,20 @@ Public Module OmniMixApiClient
         Catch
             Return String.Equals(If(PathA, "").TrimEnd("\"c, "/"c), If(PathB, "").TrimEnd("\"c, "/"c), StringComparison.OrdinalIgnoreCase)
         End Try
+    End Function
+
+    Private Function IsOptionalEndpointMissing(Ex As Exception) As Boolean
+        Dim HttpEx = TryCast(Ex, HttpRequestException)
+        If HttpEx IsNot Nothing AndAlso HttpEx.StatusCode = HttpStatusCode.NotFound Then Return True
+        Return False
+    End Function
+
+    Private Function IsEndpointUnsupported(Ex As Exception) As Boolean
+        Dim HttpEx = TryCast(Ex, HttpRequestException)
+        If HttpEx Is Nothing Then Return False
+        Return HttpEx.StatusCode = HttpStatusCode.NotFound OrElse
+               HttpEx.StatusCode = HttpStatusCode.MethodNotAllowed OrElse
+               HttpEx.StatusCode = HttpStatusCode.NotImplemented
     End Function
 
 End Module

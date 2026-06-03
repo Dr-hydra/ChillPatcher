@@ -21,6 +21,7 @@
     <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
     <EnableDefaultItems>true</EnableDefaultItems>
     <NoWarn>41999;42016;42017;42018;42019;42020;42021;42022;42032;42036;42314</NoWarn>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -30,11 +31,29 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
     <DefineConstants>RELEASE=True</DefineConstants>
     <Optimize>true</Optimize>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Snapshot|AnyCPU'">
     <DefineConstants>SNAPSHOT=True</DefineConstants>
     <Optimize>true</Optimize>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
   <ItemGroup>
@@ -106,10 +125,13 @@
   <ItemGroup>
     <Resource Include="Images\**\*" />
     <Resource Include="Resources\Font.ttf" />
-    <Content Include="..\..\gui_flutter\assets\BepInEx_win_x64_5.4.23.5.zip" Link="OmniMixAssets\BepInEx_win_x64_5.4.23.5.zip" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Resources\Custom.xaml" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Resources\*.dll" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="PCL\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <Target Name="CleanSingleFilePublishArtifacts" AfterTargets="Publish" Condition="'$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <SingleFileExtraArtifacts Include="$(PublishDir)*.pdb;$(PublishDir)*.dll.config" />
+    </ItemGroup>
+    <Delete Files="@(SingleFileExtraArtifacts)" />
+  </Target>
 
 </Project>

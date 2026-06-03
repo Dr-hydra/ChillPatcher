@@ -336,7 +336,11 @@
                                           Text="开机自启动"
                                           Margin="0,0,22,0" />
                         <local:MyCheckBox x:Name="CheckMinimizeToTray"
-                                          Text="最小化到托盘" />
+                                          Text="最小化到托盘"
+                                          Margin="0,0,22,0" />
+                        <local:MyCheckBox x:Name="CheckCloseBackendWithGui"
+                                          Text="关闭 GUI 时停止后端"
+                                          ToolTip="开启后，退出 OmniMix 界面会同时停止当前连接的后端；关闭后后端会继续运行。" />
                     </StackPanel>
 
                     <StackPanel x:Name="PanSettingsConfigButtons" Orientation="Horizontal" Margin="0,0,0,16">
@@ -413,7 +417,7 @@
                                     </Grid.ColumnDefinitions>
                                     <local:MyRadioBox local:SettingService.Key="UiLauncherTheme"
                                                       local:SettingService.Value="0"
-                                                      Text="龙猫蓝" />
+                                                      Text="默认蓝" />
                                     <local:MyRadioBox Grid.Column="1"
                                                       local:SettingService.Key="UiLauncherTheme"
                                                       local:SettingService.Value="1"
@@ -485,42 +489,94 @@
                                    FontSize="13"
                                    Foreground="{DynamicResource ColorBrush2}"
                                    Margin="0,0,0,12" />
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                            <local:MyTextButton x:Name="BtnEqualizerRefresh"
-                                                Text="刷新均衡器"
-                                                Padding="9,5,9,5"
-                                                Margin="0,0,10,0" />
-                            <local:MyTextButton x:Name="BtnEqualizerToggle"
-                                                Text="启用均衡器"
-                                                Padding="9,5,9,5"
-                                                Margin="0,0,10,0" />
-                            <local:MyTextButton x:Name="BtnEqualizerSoftClip"
-                                                Text="软削波"
-                                                Padding="9,5,9,5" />
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
-                            <local:MyTextButton x:Name="BtnEqualizerGlobalGain"
-                                                Text="全局增益"
-                                                Padding="9,5,9,5"
-                                                Margin="0,0,10,0" />
-                            <local:MyTextButton x:Name="BtnEqualizerAddPoint"
-                                                Text="添加控制点"
-                                                Padding="9,5,9,5"
-                                                Margin="0,0,10,0" />
-                            <local:MyTextButton x:Name="BtnEqualizerReset"
-                                                Text="重置平直"
-                                                Padding="9,5,9,5" />
-                        </StackPanel>
-                        <TextBlock Text="预设"
-                                   FontSize="12"
-                                   Foreground="{DynamicResource ColorBrushGray3}"
-                                   Margin="0,0,0,8" />
-                        <StackPanel x:Name="PanEqualizerPresets" Margin="0,0,0,14" />
-                        <TextBlock Text="控制点"
-                                   FontSize="12"
-                                   Foreground="{DynamicResource ColorBrushGray3}"
-                                   Margin="0,0,0,8" />
-                        <StackPanel x:Name="PanEqualizerPoints" />
+                        <local:MyCard Title="响应曲线" Margin="0,0,0,15">
+                            <StackPanel Margin="20,38,20,18">
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="LabEqualizerGraphStatus"
+                                               Text="等待均衡器数据..."
+                                               TextWrapping="Wrap"
+                                               FontSize="13"
+                                               Foreground="{DynamicResource ColorBrush2}"
+                                               VerticalAlignment="Center" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                        <local:MyTextButton x:Name="BtnEqualizerRefresh"
+                                                            Text="刷新"
+                                                            Padding="9,5,9,5"
+                                                            Margin="0,0,10,0" />
+                                        <local:MyTextButton x:Name="BtnEqualizerReset"
+                                                            Text="重置"
+                                                            Padding="9,5,9,5" />
+                                    </StackPanel>
+                                </Grid>
+                                <Border x:Name="PanEqualizerGraphHost"
+                                        Height="270"
+                                        CornerRadius="8"
+                                        Background="{DynamicResource ColorBrushBackground}">
+                                    <Canvas x:Name="CanvasEqualizerGraph"
+                                            Background="Transparent"
+                                            ClipToBounds="True" />
+                                </Border>
+                                <TextBlock Text="双击曲线区域可添加控制点；拖动控制点可调整频率和增益。低通/高通拖动时只改变频率。"
+                                           TextWrapping="Wrap"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource ColorBrushGray3}"
+                                           Margin="0,10,0,0" />
+                            </StackPanel>
+                        </local:MyCard>
+
+                        <local:MyCard Title="控制" Margin="0,0,0,15">
+                            <StackPanel Margin="20,38,20,18">
+                                <UniformGrid Columns="3" Margin="0,0,0,14">
+                                    <Border CornerRadius="6" Background="{DynamicResource ColorBrushSemiTransparent}" Margin="0,0,8,0" Padding="12,9">
+                                        <StackPanel>
+                                            <TextBlock Text="状态" FontSize="12" Foreground="{DynamicResource ColorBrushGray3}" />
+                                            <TextBlock x:Name="LabEqualizerEnabled" Text="-" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource ColorBrush3}" Margin="0,4,0,0" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border CornerRadius="6" Background="{DynamicResource ColorBrushSemiTransparent}" Margin="4,0,4,0" Padding="12,9">
+                                        <StackPanel>
+                                            <TextBlock Text="全局增益" FontSize="12" Foreground="{DynamicResource ColorBrushGray3}" />
+                                            <TextBlock x:Name="LabEqualizerGain" Text="-" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource ColorBrush3}" Margin="0,4,0,0" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border CornerRadius="6" Background="{DynamicResource ColorBrushSemiTransparent}" Margin="8,0,0,0" Padding="12,9">
+                                        <StackPanel>
+                                            <TextBlock Text="软削波" FontSize="12" Foreground="{DynamicResource ColorBrushGray3}" />
+                                            <TextBlock x:Name="LabEqualizerSoftClip" Text="-" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource ColorBrush3}" Margin="0,4,0,0" />
+                                        </StackPanel>
+                                    </Border>
+                                </UniformGrid>
+                                <WrapPanel Margin="0,0,0,0">
+                                    <local:MyTextButton x:Name="BtnEqualizerToggle"
+                                                        Text="启用均衡器"
+                                                        Padding="9,5,9,5"
+                                                        Margin="0,0,10,8" />
+                                    <local:MyTextButton x:Name="BtnEqualizerSoftClip"
+                                                        Text="软削波"
+                                                        Padding="9,5,9,5"
+                                                        Margin="0,0,10,8" />
+                                    <local:MyTextButton x:Name="BtnEqualizerGlobalGain"
+                                                        Text="全局增益"
+                                                        Padding="9,5,9,5"
+                                                        Margin="0,0,10,8" />
+                                    <local:MyTextButton x:Name="BtnEqualizerAddPoint"
+                                                        Text="添加控制点"
+                                                        Padding="9,5,9,5"
+                                                        Margin="0,0,10,8" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </local:MyCard>
+
+                        <local:MyCard Title="预设" Margin="0,0,0,15">
+                            <StackPanel x:Name="PanEqualizerPresets" Margin="20,38,20,18" />
+                        </local:MyCard>
+                        <local:MyCard Title="控制点" Margin="0,0,0,15">
+                            <StackPanel x:Name="PanEqualizerPoints" Margin="20,38,20,18" />
+                        </local:MyCard>
                     </StackPanel>
 
                     <TextBlock x:Name="LabInstanceStats"
@@ -548,15 +604,36 @@
 
             <local:MyCard x:Name="CardAbout" Title="关于" Margin="0,0,0,15" Visibility="Collapsed">
                 <StackPanel Margin="20,38,20,18">
-                    <TextBlock Text="OmniMix Player 是模块化音乐源聚合桌面端。"
+                    <TextBlock Text="OmniMix Player 是面向游戏场景的音乐聚合与播放控制前端。"
                                TextWrapping="Wrap"
                                FontSize="13"
                                Foreground="{DynamicResource ColorBrush2}"
                                Margin="0,0,0,8" />
-                    <TextBlock Text="当前 VB.NET/WPF GUI 使用 PCL 的 UI 框架、控件体系和视觉风格作为基础；产品身份、功能和图标资源归 OmniMix。"
+                    <TextBlock Text="这个 VB.NET/WPF 版本负责连接本机 OmniMix 后端，管理播放页、曲库、模块、游戏集成、均衡器和基础设置。它尽量保持与现有后端接口兼容，所以可以直接放入原 OmniMix 目录中作为桌面端入口使用。"
                                TextWrapping="Wrap"
                                FontSize="12"
-                               Foreground="{DynamicResource ColorBrushGray3}" />
+                               Foreground="{DynamicResource ColorBrushGray3}"
+                               Margin="0,0,0,14" />
+                    <local:MyListItem Title="播放与队列"
+                                      Info="显示当前歌曲、封面、播放进度、播放模式、队列与历史；支持从曲库或模块页面加入队列。"
+                                      IsHitTestVisible="False"
+                                      Margin="-5,0,0,2" />
+                    <local:MyListItem Title="曲库与模块"
+                                      Info="从网易云、QQ Music、哔哩哔哩、本地文件夹等模块读取来源内容，并按来源、歌单或分组展示。"
+                                      IsHitTestVisible="False"
+                                      Margin="-5,0,0,2" />
+                    <local:MyListItem Title="游戏集成"
+                                      Info="管理游戏目录、BepInEx 与集成 Mod，使游戏内实例可以读取播放状态并接收音频流。"
+                                      IsHitTestVisible="False"
+                                      Margin="-5,0,0,2" />
+                    <local:MyListItem Title="均衡器"
+                                      Info="提供预设、全局增益、软削波、控制点和响应曲线预览，用于调整输出音色。"
+                                      IsHitTestVisible="False"
+                                      Margin="-5,0,0,2" />
+                    <local:MyListItem Title="运行方式"
+                                      Info="前端会按设置启动或连接后端；当前构建默认请求管理员权限，以便后端能够正常与游戏集成通信。"
+                                      IsHitTestVisible="False"
+                                      Margin="-5,0,0,0" />
                 </StackPanel>
             </local:MyCard>
         </StackPanel>

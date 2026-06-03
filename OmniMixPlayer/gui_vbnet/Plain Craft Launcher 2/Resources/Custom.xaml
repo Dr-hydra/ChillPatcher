@@ -1,5 +1,5 @@
-﻿<!-- 这是 PCL 的主页自定义文件。你可以通过修改这个文件来自定义 PCL 主页：添加文本、打开网页、启动游戏，等等。
-     如果你倒腾这个文件把 PCL 玩炸了，把这个文件直接删除就行了。
+﻿<!-- 这是 OmniMix 的主页自定义文件。你可以通过修改这个文件来自定义 OmniMix 主页：添加文本、打开网页、启动游戏，等等。
+     如果你倒腾这个文件把 OmniMix 玩炸了，把这个文件直接删除就行了。
      下列内容均基于 WPF 框架。你可以在继续之前先尝试自学 XAML 与 WPF 的基础，这能让你更轻松地理解下列内容。
      你也可以使用 Ctrl + F 快速查找。例如，若需要改变文本颜色，则搜索 “颜色” 即可。 -->
 
@@ -157,7 +157,7 @@
 <local:MyCard Title="列表项 2：内置图片" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
     <StackPanel Margin="25,40,23,15">
         <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"
-                    Text="PCL 内置了一些 Minecraft 方块与物品图片，可以直接使用。"/>
+                    Text="OmniMix 内置了一些 Minecraft 方块与物品图片，可以直接使用。"/>
         <StackPanel Orientation="Horizontal" Margin="10,8,0,15" Height="30">
             <!-- 命令方块 -->
             <local:MyImage Width="30" Margin="5,0,0,0" Source="pack://application:,,,/images/Blocks/CommandBlock.png"/>
@@ -195,7 +195,7 @@
 <local:MyCard Title="主题色" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
     <StackPanel Margin="25,40,23,15">
         <TextBlock TextWrapping="Wrap" Margin="0,0,0,15"
-                    Text="你可以用类似 {DynamicResource ColorBrush5} 的格式使用 PCL 当前的主题颜色，修改末尾的数字编号以改变颜色浓度。" />
+                    Text="你可以用类似 {DynamicResource ColorBrush5} 的格式使用 OmniMix 当前的主题颜色，修改末尾的数字编号以改变颜色浓度。" />
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="8,4">
             <TextBlock TextWrapping="Wrap" Text=" 浓度 1 " Margin="5,0" Background="{DynamicResource ColorBrush1}" Foreground="#FFFFFF" />
             <TextBlock TextWrapping="Wrap" Text=" 浓度 2 " Margin="5,0" Background="{DynamicResource ColorBrush2}" Foreground="#FFFFFF" />
@@ -216,7 +216,7 @@
 <local:MyCard Title="进阶：Grid 布局" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
     <StackPanel Margin="25,40,23,15">
         <TextBlock TextWrapping="Wrap" Margin="0,0,0,4"
-                    Text="如果要实现更复杂的布局，则必须使用 Grid。Grid 可以让按钮们自动适应窗口宽度：随意拉伸 PCL 窗口，按钮大小会自动改变。" />
+                    Text="如果要实现更复杂的布局，则必须使用 Grid。Grid 可以让按钮们自动适应窗口宽度：随意拉伸 OmniMix 窗口，按钮大小会自动改变。" />
         <TextBlock TextWrapping="Wrap" Margin="0,0,0,10"
                     Text="你可以上网查找 “WPF Grid” 的相关教程，这里仅给出一个例子，不作详细介绍。你可以仅在这个教学卡片的基础上稍作调整，来实现自己的按钮布局。" />
         <Grid>
@@ -264,7 +264,7 @@
 <local:MyCard Title="进阶：联网主页" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
     <StackPanel Margin="25,40,23,15">
         <TextBlock TextWrapping="Wrap" Margin="0,0,0,10"
-                    Text="如果你在尝试制作联网更新的主页，可以查看下方的 GitHub 讨论页。&#xa;你可以根据其中的介绍为主页添加版本号检查以节省流量，也可以通过检查 Referer 和 User Agent 来确定对方的 PCL 版本。" />
+                    Text="如果你在尝试制作联网更新的主页，可以查看下方的 GitHub 讨论页。&#xa;你可以根据其中的介绍为主页添加版本号检查以节省流量，也可以通过检查 Referer 和 User Agent 来确定对方的 OmniMix 版本。" />
         <local:MyButton Margin="0,0,0,8" Height="35" HorizontalAlignment="Center" Padding="20,0,20,0"
                     Text="打开 GitHub 讨论页" EventType="打开网页" EventData="https://github.com/Meloong-Git/PCL/discussions/2528" />
     </StackPanel>
@@ -288,7 +288,7 @@ TextBlock（纯文本）：
  - Foreground：调整前景颜色（十六进制字符串，例如 #FF010203 代表 ARGB 中的 255,1,2,3。前两位代表不透明度，FF 为全不透明，00 为全透明）
 
 local:MyImage（图片）：
- - Source：要显示的图片的网址，或 PCL 内置图片位置
+ - Source：要显示的图片的网址，或 OmniMix 内置图片位置
  - FallbackSource：当 Source 首次下载失败时，会从该备用地址加载图片
  - LoadingSource：正在下载网络图片时显示的本地图片（不支持联网下载）；默认为 pack://application:,,,/images/Icons/NoIcon.png
  - EnableCache：若图片是联网获取的，是否将图片保存到本地缓存，在 7 天内不再重新下载；True 为是（默认），False 为否

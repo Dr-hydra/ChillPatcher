@@ -69,7 +69,7 @@ Public Class Application
                 DirectoryUtils.Create(PathExeFolder & "OmniMixPlayer\Musics\")
                 CheckPermissionWithException(PathExeFolder & "OmniMixPlayer\")
             Catch ex As Exception
-                MsgBox($"OmniMix Player 没有对当前文件夹的权限（{PathExeFolder}OmniMixPlayer\），请尝试：" & vbCrLf &
+                MsgBox($"OmniMix Player 没有对当前文件夹的权限（{PathExeFolder}），请尝试：" & vbCrLf &
                   "1. 将 OmniMix Player 移动到其他文件夹" & If(PathExeFolder.StartsWithF("C:", True), "，例如 C 盘和桌面以外的其他位置。", "。") & vbCrLf &
                   "2. 删除当前目录中的 OmniMixPlayer 文件夹，然后再试。" & vbCrLf &
                   "3. 右键 OmniMix Player 选择属性，打开 兼容性 中的 以管理员身份运行此程序。",
@@ -116,7 +116,7 @@ RetryCacheCheck:
                 FrmStart.Show(False, True)
             End If
             '日志初始化
-            MeloongCore.Main.Init(New PclLogger With {.logFolder = PathUtils.CurrentFolder & "OmniMixPlayer", .MinLevel = If(ModeDebug, LogLevel.Trace, LogLevel.Info)})
+            MeloongCore.Main.Init(New PclLogger With {.logFolder = PathExeFolder & "OmniMixPlayer", .MinLevel = If(ModeDebug, LogLevel.Trace, LogLevel.Info)})
             Logger.Info($"程序版本：{VersionDisplay} ({VersionCode}{If(CommitHash = "", "", $"，#{CommitHash}")})")
             If BuildType = BuildTypes.Snapshot Then
                 Logger.Info($"识别码：{Identify}{If(ThemeCheckOne(9), "，已解锁反馈主题", "，未解锁反馈主题")}")

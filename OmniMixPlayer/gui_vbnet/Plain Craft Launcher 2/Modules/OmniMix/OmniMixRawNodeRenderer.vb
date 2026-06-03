@@ -5,22 +5,22 @@ Public Module OmniMixRawNodeRenderer
     Public Function Render(Node As OmniMixRawNodeData, BaseUrl As String, OnEvent As RawNodeEventHandler) As FrameworkElement
         If Node Is Nothing Then Return CreateEmptyPanel()
 
-        Select Case If(Node.NodeType, "")
-            Case "Container"
+        Select Case If(Node.NodeType, "").Trim().ToLowerInvariant()
+            Case "container"
                 Return RenderContainer(Node, BaseUrl, OnEvent)
-            Case "Text"
+            Case "text"
                 Return RenderText(Node)
-            Case "Input"
+            Case "input"
                 Return RenderInput(Node, OnEvent)
-            Case "Button"
+            Case "button"
                 Return RenderButton(Node, OnEvent)
-            Case "Switch"
+            Case "switch"
                 Return RenderSwitch(Node, OnEvent)
-            Case "Image"
+            Case "image"
                 Return RenderImage(Node, BaseUrl)
-            Case "Select"
+            Case "select"
                 Return RenderSelect(Node, OnEvent)
-            Case "List"
+            Case "list"
                 Return RenderList(Node, BaseUrl, OnEvent)
             Case Else
                 Return RenderText(New OmniMixRawNodeData With {.Text = If(String.IsNullOrWhiteSpace(Node.Text), "暂不支持的节点：" & Node.NodeType, Node.Text)})
@@ -79,11 +79,39 @@ Public Module OmniMixRawNodeRenderer
             .MaxWidth = 520,
             .HorizontalAlignment = HorizontalAlignment.Left
         }
-        AddHandler TextBox.LostFocus, Sub()
-                                          OnEvent?.Invoke(Node.Id, "change", TextBox.Text)
-                                      End Sub
-        Grid.SetColumn(TextBox, 1)
-        Row.Children.Add(TextBox)
+        Dim LastSentText As String = If(Node.Value, "")
+        Dim CommitValue As Action =
+            Sub()
+                If TextBox.Text = LastSentText Then Return
+                LastSentText = TextBox.Text
+                OnEvent?.Invoke(Node.Id, "change", TextBox.Text)
+            End Sub
+        AddHandler TextBox.KeyDown, Sub(sender, e)
+                                        If e.Key = System.Windows.Input.Key.Enter Then
+                                            CommitValue()
+                                            e.Handled = True
+                                        End If
+                                    End Sub
+        Dim InputPanel As New StackPanel With {
+            .Orientation = Orientation.Horizontal,
+            .HorizontalAlignment = HorizontalAlignment.Left
+        }
+        InputPanel.Children.Add(TextBox)
+
+        Dim CommitButton As New MyButton With {
+            .Text = "确定",
+            .Width = 54,
+            .Height = 30,
+            .Margin = New Thickness(8, 0, 0, 0),
+            .ColorType = MyButton.ColorState.Highlight
+        }
+        AddHandler CommitButton.Click, Sub()
+                                           CommitValue()
+                                       End Sub
+        InputPanel.Children.Add(CommitButton)
+
+        Grid.SetColumn(InputPanel, 1)
+        Row.Children.Add(InputPanel)
         Return WrapSettingRow(Row)
     End Function
 
@@ -98,7 +126,11 @@ Public Module OmniMixRawNodeRenderer
             .Margin = New Thickness(0, 5, 12, 5)
         }
         AddHandler Button.Click, Sub(sender, e)
-                                     OnEvent?.Invoke(Node.Id, "click", If(Node.Value, ""))
+                                     System.Windows.Input.Keyboard.ClearFocus()
+                                     Button.Dispatcher.BeginInvoke(Async Sub()
+                                                                       Await Task.Delay(850)
+                                                                       OnEvent?.Invoke(Node.Id, "click", If(Node.Value, ""))
+                                                                   End Sub, System.Windows.Threading.DispatcherPriority.ContextIdle)
                                  End Sub
         Return Button
     End Function
