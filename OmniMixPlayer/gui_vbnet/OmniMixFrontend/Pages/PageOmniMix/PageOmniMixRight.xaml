@@ -1,0 +1,641 @@
+<local:MyPageRight x:Class="PageOmniMixRight"
+                   xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                   xmlns:local="clr-namespace:OmniMixFrontend"
+                   PanScroll="PanBack">
+    <local:MyScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          x:Name="PanBack">
+        <StackPanel x:Name="PanMain" Margin="28,24,28,14" Grid.IsSharedSizeScope="True">
+            <local:MyCard x:Name="CardHero" Title="OmniMix" Margin="0,0,0,15" Visibility="Collapsed">
+                <Grid Margin="20,40,20,18">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock x:Name="LabTitle"
+                                   Text="播放"
+                                   FontSize="24"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource ColorBrush3}" />
+                        <TextBlock x:Name="LabSubtitle"
+                                   Text="当前播放、队列和音乐源状态。"
+                                   TextWrapping="Wrap"
+                                   FontSize="13"
+                                   Foreground="{DynamicResource ColorBrushGray3}"
+                                   Margin="0,8,20,0" />
+                        <TextBlock x:Name="LabStatus"
+                                   Text=""
+                                   TextWrapping="Wrap"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource ColorBrush2}"
+                                   Margin="0,10,20,0" />
+                    </StackPanel>
+                    <local:MyLoading Grid.Column="1"
+                                     x:Name="LoadState"
+                                     Height="42"
+                                     Width="42"
+                                     AutoRun="False"
+                                     VerticalAlignment="Center" />
+                </Grid>
+            </local:MyCard>
+
+            <Grid x:Name="GridHome" Visibility="Collapsed">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="0" />
+                    <ColumnDefinition Width="0" />
+                    <ColumnDefinition Width="*" MinWidth="270" />
+                </Grid.ColumnDefinitions>
+
+                <local:MyCard x:Name="CardPlayback" Title="当前播放" Grid.Column="0" Margin="0,0,0,15" Visibility="Collapsed">
+                    <StackPanel Margin="20,38,20,18">
+                        <TextBlock x:Name="LabPlaybackSummary"
+                                   Text="等待连接后端..."
+                                   TextWrapping="Wrap"
+                                   FontSize="13"
+                                   Foreground="{DynamicResource ColorBrush2}"
+                                   Margin="0,0,0,16" />
+                        <Border Height="180"
+                                CornerRadius="6"
+                                Background="{DynamicResource ColorBrushBackground}"
+                                Margin="0,0,0,16">
+                            <Grid>
+                                <StackPanel VerticalAlignment="Center" Margin="26,0">
+                                    <TextBlock x:Name="LabPlaybackTrack"
+                                               Text="暂无曲目"
+                                               TextWrapping="Wrap"
+                                               FontSize="25"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource ColorBrush3}" />
+                                    <TextBlock x:Name="LabPlaybackMeta"
+                                               Text=""
+                                               TextWrapping="Wrap"
+                                               FontSize="13"
+                                               Foreground="{DynamicResource ColorBrushGray3}"
+                                               Margin="0,8,0,0" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <TextBlock x:Name="LabPlaybackInstance"
+                                   Text=""
+                                   TextWrapping="Wrap"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource ColorBrush2}"
+                                   Margin="0,0,0,12" />
+                        <TextBlock x:Name="LabPlaybackPosition"
+                                   Text="进度：--"
+                                   TextWrapping="Wrap"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource ColorBrushGray3}"
+                                   Margin="0,0,0,12" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,2,0,18">
+                            <local:MyTextButton x:Name="BtnPlaybackPrev"
+                                                Text="上一首"
+                                                Padding="12,6,12,6"
+                                                Margin="0,0,16,0" />
+                            <local:MyTextButton x:Name="BtnPlaybackToggle"
+                                                Text="播放 / 暂停"
+                                                Padding="18,7,18,7"
+                                                Margin="0,0,16,0" />
+                            <local:MyTextButton x:Name="BtnPlaybackNext"
+                                                Text="下一首"
+                                                Padding="12,6,12,6" />
+                        </StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="音量"
+                                       VerticalAlignment="Center"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource ColorBrush2}"
+                                       Margin="0,0,12,0" />
+                            <local:MySlider x:Name="SliderVolume"
+                                            Grid.Column="1"
+                                            MaxValue="100"
+                                            Value="100"
+                                            VerticalAlignment="Center" />
+                            <TextBlock x:Name="LabPlaybackVolume"
+                                       Grid.Column="2"
+                                       Text="100%"
+                                       VerticalAlignment="Center"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource ColorBrushGray3}"
+                                       Margin="12,0,0,0" />
+                        </Grid>
+                    </StackPanel>
+                </local:MyCard>
+
+                <local:MyCard x:Name="CardQueue" Title="" Grid.Column="2" Margin="0,0,0,15">
+                    <StackPanel Margin="20,20,20,18">
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal">
+                                <Border x:Name="PanQueueTab"
+                                        CornerRadius="6"
+                                        Background="{DynamicResource ColorBrush7}"
+                                        Margin="0,0,6,0">
+                                    <local:MyTextButton x:Name="BtnQueueTab"
+                                                        Text="队列"
+                                                        Padding="10,4,10,4" />
+                                </Border>
+                                <Border x:Name="PanHistoryTab"
+                                        CornerRadius="6"
+                                        Background="{DynamicResource ColorBrushSemiTransparent}">
+                                    <local:MyTextButton x:Name="BtnHistoryTab"
+                                                        Text="历史"
+                                                        Padding="10,4,10,4" />
+                                </Border>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1"
+                                        Orientation="Horizontal"
+                                        HorizontalAlignment="Right">
+                                <local:MyIconButton x:Name="BtnQueueClear"
+                                                    Width="24"
+                                                    Height="24"
+                                                    LogoScale="0.82"
+                                                    ToolTip="清空"
+                                                    Margin="0,0,6,0" />
+                                <local:MyIconButton x:Name="BtnPlaybackRefresh"
+                                                    Width="24"
+                                                    Height="24"
+                                                    LogoScale="0.84"
+                                                    ToolTip="刷新" />
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock x:Name="LabQueueSummary"
+                                   Text=""
+                                   TextWrapping="Wrap"
+                                   FontSize="13"
+                                   Foreground="{DynamicResource ColorBrush2}"
+                                   Margin="0,0,0,10"
+                                   Visibility="Collapsed" />
+                        <StackPanel x:Name="PanQueueList" />
+                    </StackPanel>
+                </local:MyCard>
+            </Grid>
+
+            <local:MyCard x:Name="CardLibrary" Title="音乐库" Margin="0,0,0,15" Visibility="Collapsed">
+                <StackPanel Margin="20,38,20,18">
+                    <TextBlock x:Name="LabLibrarySummary"
+                               Text="等待连接后端..."
+                               TextWrapping="Wrap"
+                               FontSize="13"
+                               Foreground="{DynamicResource ColorBrush2}"
+                               Margin="0,0,0,10" />
+                    <TextBlock x:Name="LabPlaylistSourcesSummary"
+                               Text=""
+                               TextWrapping="Wrap"
+                               FontSize="12"
+                               Foreground="{DynamicResource ColorBrushGray3}"
+                               Margin="0,0,0,8"
+                               Visibility="Collapsed" />
+                    <StackPanel x:Name="PanPlaylistSources" Margin="0,0,0,12" Visibility="Collapsed" />
+                    <StackPanel x:Name="PanLibraryList" />
+                </StackPanel>
+            </local:MyCard>
+
+            <local:MyCard x:Name="CardModules" Title="模块" Margin="0,0,0,15" Visibility="Collapsed">
+                <StackPanel Margin="20,38,20,18">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10" Visibility="Collapsed">
+                        <local:MyTextButton x:Name="BtnModulesTab"
+                                            Text="Mod"
+                                            Padding="8,4,8,4"
+                                            Margin="0,0,8,0" />
+                        <local:MyTextButton x:Name="BtnGameIntegrationTab"
+                                            Text="游戏集成"
+                                            Padding="8,4,8,4" />
+                    </StackPanel>
+                    <TextBlock x:Name="LabModulesSummary"
+                               Text="等待连接后端..."
+                               TextWrapping="Wrap"
+                               FontSize="13"
+                               Foreground="{DynamicResource ColorBrush2}"
+                               Margin="0,0,0,10" />
+                    <StackPanel x:Name="PanModulesList" />
+                    <WrapPanel x:Name="PanLaunchpadList" Visibility="Collapsed" />
+                    <StackPanel x:Name="PanGameIntegrationList" Visibility="Collapsed" />
+                </StackPanel>
+            </local:MyCard>
+
+            <local:MyCard x:Name="CardModuleUi" Title="" Margin="0,0,0,15" Visibility="Collapsed">
+                <StackPanel Margin="20,20,20,18">
+                    <Border Height="46"
+                            CornerRadius="6"
+                            Background="{DynamicResource ColorBrushSemiTransparent}"
+                            Margin="0,0,0,14">
+                        <Grid>
+                            <local:MyIconButton x:Name="BtnModuleUiBack"
+                                                HorizontalAlignment="Left"
+                                                Theme="Black"
+                                                Opacity="0.65"
+                                                Width="28"
+                                                Height="28"
+                                                Margin="10,0,0,0"
+                                                LogoScale="0.84"
+                                                ToolTip="返回"
+                                                Logo="M1097 584 250 584 562 896C591 925 591 972 562 1001 533 1030 487 1030 458 1001L21 565C6 550-0 531 0 511L0 511 0 511C-0 492 6 472 21 457L458 21C487-7 533-7 562 21 591 50 591 97 562 126L250 438 1097 438C1137 438 1170 471 1170 511 1170 551 1137 584 1097 584L1097 584Z" />
+                            <TextBlock x:Name="LabModuleUiTitle"
+                                       Margin="50,0,14,0"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis"
+                                       FontSize="15"
+                                       FontWeight="SemiBold"
+                                       Foreground="{DynamicResource ColorBrush3}" />
+                        </Grid>
+                    </Border>
+                    <TextBlock x:Name="LabModuleUiSummary"
+                               Text="等待加载模块 UI..."
+                               TextWrapping="Wrap"
+                               FontSize="13"
+                               Foreground="{DynamicResource ColorBrush2}"
+                               Margin="0,0,0,10" />
+                    <StackPanel x:Name="PanModuleUi" />
+                </StackPanel>
+            </local:MyCard>
+
+            <local:MyCard x:Name="CardSettings" Title="设置" Margin="0,0,0,15" Visibility="Collapsed">
+                <StackPanel Margin="20,38,20,18">
+                    <TextBlock x:Name="LabSettingsSummary"
+                               Text="等待连接后端..."
+                               TextWrapping="Wrap"
+                               FontSize="13"
+                               Foreground="{DynamicResource ColorBrush2}"
+                               Margin="0,0,0,14" />
+
+                    <Grid x:Name="PanSettingsConfig" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="10" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="10" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="监听端口"
+                                   VerticalAlignment="Center"
+                                   FontSize="13"
+                                   Foreground="{DynamicResource ColorBrush2}" />
+                        <local:MyTextBox x:Name="TxtBackendPort"
+                                         Grid.Column="1"
+                                         Height="34"
+                                         HintText="17890" />
+                        <TextBlock Grid.Row="2"
+                                   Text="绑定地址"
+                                   VerticalAlignment="Center"
+                                   FontSize="13"
+                                   Foreground="{DynamicResource ColorBrush2}" />
+                        <local:MyTextBox x:Name="TxtBackendBind"
+                                         Grid.Row="2"
+                                         Grid.Column="1"
+                                         Height="34"
+                                         HintText="127.0.0.1" />
+                        <TextBlock Grid.Row="4"
+                                   Text="后端程序"
+                                   VerticalAlignment="Center"
+                                   FontSize="13"
+                                   Foreground="{DynamicResource ColorBrush2}" />
+                        <Grid Grid.Row="4"
+                              Grid.Column="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <local:MyTextBox x:Name="TxtBackendPath"
+                                             Height="34"
+                                             HintText="OmniMixPlayer.Backend.exe" />
+                            <local:MyIconButton x:Name="BtnBackendPathBrowse"
+                                                Grid.Column="1"
+                                                Width="28"
+                                                Height="28"
+                                                Margin="8,3,0,3"
+                                                LogoScale="1.0"
+                                                ToolTip="选择后端程序" />
+                            <local:MyIconButton x:Name="BtnBackendPathReset"
+                                                Grid.Column="2"
+                                                Width="28"
+                                                Height="28"
+                                                Margin="6,3,0,3"
+                                                LogoScale="0.84"
+                                                ToolTip="恢复默认后端" />
+                        </Grid>
+                    </Grid>
+
+                    <StackPanel x:Name="PanSettingsChecks" Orientation="Horizontal" Margin="0,0,0,14">
+                        <local:MyCheckBox x:Name="CheckAutostart"
+                                          Text="开机自启动"
+                                          Margin="0,0,22,0" />
+                        <local:MyCheckBox x:Name="CheckMinimizeToTray"
+                                          Text="最小化到托盘"
+                                          Margin="0,0,22,0" />
+                        <local:MyCheckBox x:Name="CheckCloseBackendWithGui"
+                                          Text="关闭 GUI 时停止后端"
+                                          ToolTip="开启后，退出 OmniMix 界面会同时停止当前连接的后端；关闭后后端会继续运行。" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="PanSettingsConfigButtons" Orientation="Horizontal" Margin="0,0,0,16">
+                        <local:MyTextButton x:Name="BtnSettingsRefresh"
+                                            Text="刷新配置"
+                                            Padding="9,5,9,5"
+                                            Margin="0,0,12,0" />
+                        <local:MyTextButton x:Name="BtnSettingsSave"
+                                            Text="保存配置"
+                                            Padding="9,5,9,5"
+                                            Margin="0,0,12,0" />
+                        <local:MyTextButton x:Name="BtnBackendReconnect"
+                                            Text="启动/重连"
+                                            Padding="9,5,9,5"
+                                            Margin="0,0,12,0" />
+                        <local:MyTextButton x:Name="BtnBackendStop"
+                                            Text="停止后端"
+                                            Padding="9,5,9,5" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="PanSettingsPersonalization"
+                                Margin="0,0,0,18"
+                                Visibility="Collapsed"
+                                Grid.IsSharedSizeScope="True">
+                        <local:MyCard Title="基础" Margin="0,0,0,15">
+                            <Grid Margin="25,40,25,17">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="SettingName" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="10" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="10" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="窗口不透明度"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,22,0" />
+                                <local:MySlider Grid.Column="1"
+                                                local:SettingService.Key="UiLauncherTransparent"
+                                                MaxValue="600"
+                                                ValueByKey="10" />
+                                <TextBlock Grid.Row="2"
+                                           Text="背景不透明度"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,22,0" />
+                                <local:MySlider Grid.Row="2"
+                                                Grid.Column="1"
+                                                local:SettingService.Key="UiBackgroundOpacity"
+                                                MaxValue="1000"
+                                                ValueByKey="10" />
+                                <TextBlock Grid.Row="4"
+                                           Text="背景模糊"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,22,0" />
+                                <local:MySlider Grid.Row="4"
+                                                Grid.Column="1"
+                                                local:SettingService.Key="UiBackgroundBlur"
+                                                MaxValue="40" />
+                            </Grid>
+                        </local:MyCard>
+
+                        <local:MyCard Title="主题" Margin="0,0,0,15">
+                            <StackPanel Margin="25,40,25,17">
+                                <Grid Margin="-1,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <local:MyRadioBox local:SettingService.Key="UiLauncherTheme"
+                                                      local:SettingService.Value="0"
+                                                      Text="默认蓝" />
+                                    <local:MyRadioBox Grid.Column="1"
+                                                      local:SettingService.Key="UiLauncherTheme"
+                                                      local:SettingService.Value="1"
+                                                      Text="甜柠青" />
+                                    <local:MyRadioBox Grid.Column="2"
+                                                      local:SettingService.Key="UiLauncherTheme"
+                                                      local:SettingService.Value="2"
+                                                      Text="小草绿" />
+                                    <local:MyRadioBox Grid.Column="3"
+                                                      local:SettingService.Key="UiLauncherTheme"
+                                                      local:SettingService.Value="3"
+                                                      Text="菠萝黄" />
+                                    <local:MyRadioBox Grid.Column="4"
+                                                      local:SettingService.Key="UiLauncherTheme"
+                                                      local:SettingService.Value="4"
+                                                      Text="橡木棕" />
+                                </Grid>
+                                <local:MyCheckBox local:SettingService.Key="UiBackgroundColorful"
+                                                  Text="叠加彩色背景"
+                                                  Margin="-1,6,0,0"
+                                                  Height="22" />
+                            </StackPanel>
+                        </local:MyCard>
+                    </StackPanel>
+
+                    <StackPanel x:Name="PanSettingsService" Margin="0,0,0,18">
+                        <TextBlock x:Name="LabServiceSummary"
+                                   Text="后端服务：正在读取..."
+                                   TextWrapping="Wrap"
+                                   FontSize="13"
+                                   Foreground="{DynamicResource ColorBrush2}"
+                                   Margin="0,0,0,10" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <local:MyTextButton x:Name="BtnServiceRefresh"
+                                                Text="刷新服务"
+                                                Padding="9,5,9,5"
+                                                Margin="0,0,10,0" />
+                            <local:MyTextButton x:Name="BtnServiceInstall"
+                                                Text="安装服务"
+                                                Padding="9,5,9,5"
+                                                Margin="0,0,10,0" />
+                            <local:MyTextButton x:Name="BtnServiceUninstall"
+                                                Text="卸载服务"
+                                                Padding="9,5,9,5"
+                                                Margin="0,0,10,0" />
+                            <local:MyTextButton x:Name="BtnServiceStart"
+                                                Text="启动服务"
+                                                Padding="9,5,9,5"
+                                                Margin="0,0,10,0" />
+                            <local:MyTextButton x:Name="BtnServiceStop"
+                                                Text="停止服务"
+                                                Padding="9,5,9,5" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <local:MyCheckBox x:Name="CheckServiceAutoStart"
+                                              Text="后端服务随系统启动"
+                                              IsEnabled="False"
+                                              Margin="0,0,14,0" />
+                            <local:MyTextButton x:Name="BtnServiceToggleAutoStart"
+                                                Text="切换自启动"
+                                                Padding="9,5,9,5" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel x:Name="PanSettingsEqualizer" Margin="0,0,0,10" Visibility="Collapsed">
+                        <TextBlock x:Name="LabEqualizerSummary"
+                                   Text="等待连接后端..."
+                                   TextWrapping="Wrap"
+                                   FontSize="13"
+                                   Foreground="{DynamicResource ColorBrush2}"
+                                   Margin="0,0,0,12" />
+                        <local:MyCard Title="响应曲线" Margin="0,0,0,15">
+                            <StackPanel Margin="20,38,20,18">
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="LabEqualizerGraphStatus"
+                                               Text="等待均衡器数据..."
+                                               TextWrapping="Wrap"
+                                               FontSize="13"
+                                               Foreground="{DynamicResource ColorBrush2}"
+                                               VerticalAlignment="Center" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                        <local:MyTextButton x:Name="BtnEqualizerRefresh"
+                                                            Text="刷新"
+                                                            Padding="9,5,9,5"
+                                                            Margin="0,0,10,0" />
+                                        <local:MyTextButton x:Name="BtnEqualizerReset"
+                                                            Text="重置"
+                                                            Padding="9,5,9,5" />
+                                    </StackPanel>
+                                </Grid>
+                                <Border x:Name="PanEqualizerGraphHost"
+                                        Height="270"
+                                        CornerRadius="8"
+                                        Background="{DynamicResource ColorBrushBackground}">
+                                    <Canvas x:Name="CanvasEqualizerGraph"
+                                            Background="Transparent"
+                                            ClipToBounds="True" />
+                                </Border>
+                                <TextBlock Text="双击曲线区域可添加控制点；拖动控制点可调整频率和增益。低通/高通拖动时只改变频率。"
+                                           TextWrapping="Wrap"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource ColorBrushGray3}"
+                                           Margin="0,10,0,0" />
+                            </StackPanel>
+                        </local:MyCard>
+
+                        <local:MyCard Title="控制" Margin="0,0,0,15">
+                            <StackPanel Margin="20,38,20,18">
+                                <UniformGrid Columns="3" Margin="0,0,0,14">
+                                    <Border CornerRadius="6" Background="{DynamicResource ColorBrushSemiTransparent}" Margin="0,0,8,0" Padding="12,9">
+                                        <StackPanel>
+                                            <TextBlock Text="状态" FontSize="12" Foreground="{DynamicResource ColorBrushGray3}" />
+                                            <TextBlock x:Name="LabEqualizerEnabled" Text="-" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource ColorBrush3}" Margin="0,4,0,0" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border CornerRadius="6" Background="{DynamicResource ColorBrushSemiTransparent}" Margin="4,0,4,0" Padding="12,9">
+                                        <StackPanel>
+                                            <TextBlock Text="全局增益" FontSize="12" Foreground="{DynamicResource ColorBrushGray3}" />
+                                            <TextBlock x:Name="LabEqualizerGain" Text="-" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource ColorBrush3}" Margin="0,4,0,0" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border CornerRadius="6" Background="{DynamicResource ColorBrushSemiTransparent}" Margin="8,0,0,0" Padding="12,9">
+                                        <StackPanel>
+                                            <TextBlock Text="软削波" FontSize="12" Foreground="{DynamicResource ColorBrushGray3}" />
+                                            <TextBlock x:Name="LabEqualizerSoftClip" Text="-" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource ColorBrush3}" Margin="0,4,0,0" />
+                                        </StackPanel>
+                                    </Border>
+                                </UniformGrid>
+                                <WrapPanel Margin="0,0,0,0">
+                                    <local:MyTextButton x:Name="BtnEqualizerToggle"
+                                                        Text="启用均衡器"
+                                                        Padding="9,5,9,5"
+                                                        Margin="0,0,10,8" />
+                                    <local:MyTextButton x:Name="BtnEqualizerSoftClip"
+                                                        Text="软削波"
+                                                        Padding="9,5,9,5"
+                                                        Margin="0,0,10,8" />
+                                    <local:MyTextButton x:Name="BtnEqualizerGlobalGain"
+                                                        Text="全局增益"
+                                                        Padding="9,5,9,5"
+                                                        Margin="0,0,10,8" />
+                                    <local:MyTextButton x:Name="BtnEqualizerAddPoint"
+                                                        Text="添加控制点"
+                                                        Padding="9,5,9,5"
+                                                        Margin="0,0,10,8" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </local:MyCard>
+
+                        <local:MyCard Title="预设" Margin="0,0,0,15">
+                            <StackPanel x:Name="PanEqualizerPresets" Margin="20,38,20,18" />
+                        </local:MyCard>
+                        <local:MyCard Title="控制点" Margin="0,0,0,15">
+                            <StackPanel x:Name="PanEqualizerPoints" Margin="20,38,20,18" />
+                        </local:MyCard>
+                    </StackPanel>
+
+                    <TextBlock x:Name="LabInstanceStats"
+                               Text="实例统计：--"
+                               TextWrapping="Wrap"
+                               FontSize="12"
+                               Foreground="{DynamicResource ColorBrushGray3}"
+                               Margin="0,0,0,10" />
+                    <StackPanel x:Name="PanSettingsInstances" />
+
+                    <TextBlock x:Name="LabArchiveSummary"
+                               Text="归档：--"
+                               TextWrapping="Wrap"
+                               FontSize="12"
+                               Foreground="{DynamicResource ColorBrushGray3}"
+                               Margin="0,16,0,10" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <local:MyTextButton x:Name="BtnArchivesRefresh"
+                                            Text="刷新归档"
+                                            Padding="9,5,9,5" />
+                    </StackPanel>
+                    <StackPanel x:Name="PanSettingsArchives" />
+                </StackPanel>
+            </local:MyCard>
+
+            <local:MyCard x:Name="CardAbout" Title="关于" Margin="0,0,0,15" Visibility="Collapsed">
+                <StackPanel Margin="20,38,20,18">
+                    <TextBlock Text="OmniMix Player 是面向游戏场景的音乐聚合与播放控制前端。"
+                               TextWrapping="Wrap"
+                               FontSize="13"
+                               Foreground="{DynamicResource ColorBrush2}"
+                               Margin="0,0,0,8" />
+                    <TextBlock Text="这个 VB.NET/WPF 版本负责连接本机 OmniMix 后端，管理播放页、曲库、模块、游戏集成、均衡器和基础设置。它尽量保持与现有后端接口兼容，所以可以直接放入原 OmniMix 目录中作为桌面端入口使用。"
+                               TextWrapping="Wrap"
+                               FontSize="12"
+                               Foreground="{DynamicResource ColorBrushGray3}"
+                               Margin="0,0,0,14" />
+                    <local:MyListItem Title="播放与队列"
+                                      Info="显示当前歌曲、封面、播放进度、播放模式、队列与历史；支持从曲库或模块页面加入队列。"
+                                      IsHitTestVisible="False"
+                                      Margin="-5,0,0,2" />
+                    <local:MyListItem Title="曲库与模块"
+                                      Info="从网易云、QQ Music、哔哩哔哩、本地文件夹等模块读取来源内容，并按来源、歌单或分组展示。"
+                                      IsHitTestVisible="False"
+                                      Margin="-5,0,0,2" />
+                    <local:MyListItem Title="游戏集成"
+                                      Info="管理游戏目录、BepInEx 与集成 Mod，使游戏内实例可以读取播放状态并接收音频流。"
+                                      IsHitTestVisible="False"
+                                      Margin="-5,0,0,2" />
+                    <local:MyListItem Title="均衡器"
+                                      Info="提供预设、全局增益、软削波、控制点和响应曲线预览，用于调整输出音色。"
+                                      IsHitTestVisible="False"
+                                      Margin="-5,0,0,2" />
+                    <local:MyListItem Title="运行方式"
+                                      Info="前端会按设置启动或连接后端；当前构建默认请求管理员权限，以便后端能够正常与游戏集成通信。"
+                                      IsHitTestVisible="False"
+                                      Margin="-5,0,0,0" />
+                </StackPanel>
+            </local:MyCard>
+        </StackPanel>
+    </local:MyScrollViewer>
+</local:MyPageRight>

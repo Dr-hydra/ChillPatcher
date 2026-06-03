@@ -1,6 +1,6 @@
 # OmniMix VB.NET Compatible Frontend
 
-OmniMix VB.NET Compatible Frontend is a Windows desktop client for the existing OmniMix backend. Its goal is to provide a PCL-style WPF experience while staying compatible with the upstream backend API, module UI endpoints, music library, playback queue, and game integration flow.
+OmniMix VB.NET Compatible Frontend is a Windows desktop client for the existing OmniMix backend. Its goal is to provide a lightweight WPF experience while staying compatible with the upstream backend API, module UI endpoints, music library, playback queue, and game integration flow.
 
 This repository is maintained as a frontend compatibility layer. Backend behavior should remain compatible with upstream OmniMix/ChillPatcher builds; frontend-side adapters are preferred when compatibility issues appear.
 
@@ -55,7 +55,7 @@ dotnet build "OmniMixPlayer/OmniMixPlayer.sln" -c Debug -v minimal
 Single-file publish:
 
 ```powershell
-dotnet publish "OmniMixPlayer/gui_vbnet/Plain Craft Launcher 2/Plain Craft Launcher 2.vbproj" `
+dotnet publish "OmniMixPlayer/gui_vbnet/OmniMixFrontend/OmniMixFrontend.vbproj" `
   -c Debug `
   -o "OmniMixPlayer/bin/GuiVbnetSingle" `
   /p:PublishSingleFile=true `
