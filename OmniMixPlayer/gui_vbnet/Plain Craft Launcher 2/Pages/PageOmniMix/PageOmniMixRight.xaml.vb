@@ -550,6 +550,8 @@ Public Class PageOmniMixRight
 
         Try
             OmniMixBackendManager.SetConfiguredBackendPath(BackendPath)
+            Dim EffectiveBackendPath = OmniMixBackendManager.FindBackendExe()
+            Dim ServiceUpdated = Await OmniMixPlatformService.UpdateServiceBinaryPathAsync(EffectiveBackendPath)
             Dim Updates As New Dictionary(Of String, Object) From {
                 {"backend_port", Port},
                 {"backend_bind", Bind},
@@ -559,6 +561,7 @@ Public Class PageOmniMixRight
             Await OmniMixApiClient.PutConfigRawAsync(CurrentBaseUrl, Updates)
             Await OmniMixApiClient.SaveConfigAsync(CurrentBaseUrl)
             LabSettingsSummary.Text = "配置已保存。端口和绑定地址变更会在后端重启后生效。"
+            If ServiceUpdated Then LabSettingsSummary.Text &= vbCrLf & "后端服务路径已同步。"
         Catch Ex As Exception
             LabSettingsSummary.Text = "配置保存失败：" & Ex.Message
         End Try
@@ -582,12 +585,15 @@ Public Class PageOmniMixRight
         End Using
     End Sub
 
-    Private Sub BtnBackendPathReset_Click(sender As Object, e As EventArgs) Handles BtnBackendPathReset.Click
+    Private Async Sub BtnBackendPathReset_Click(sender As Object, e As EventArgs) Handles BtnBackendPathReset.Click
         OmniMixBackendManager.SetConfiguredBackendPath("")
         Dim DefaultBackendPath = OmniMixBackendManager.FindDefaultBackendExe()
         TxtBackendPath.HintText = If(String.IsNullOrWhiteSpace(DefaultBackendPath), "OmniMixPlayer.Backend.exe", "默认：" & DefaultBackendPath)
         TxtBackendPath.Text = ""
         LabSettingsSummary.Text = "已恢复为默认构建后端。"
+        Dim ServiceUpdated = Await OmniMixPlatformService.UpdateServiceBinaryPathAsync(DefaultBackendPath)
+        If ServiceUpdated Then LabSettingsSummary.Text &= vbCrLf & "后端服务路径已同步。"
+        Await RefreshServiceStatusAsync()
     End Sub
 
     Private Async Sub BtnBackendReconnect_Click(sender As Object, e As EventArgs) Handles BtnBackendReconnect.Click

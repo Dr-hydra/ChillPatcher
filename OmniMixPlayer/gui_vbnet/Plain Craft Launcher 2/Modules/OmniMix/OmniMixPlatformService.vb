@@ -70,12 +70,35 @@ Public Module OmniMixPlatformService
         Return True
     End Function
 
+    Public Async Function UpdateServiceBinaryPathAsync(Optional BackendPath As String = "") As Task(Of Boolean)
+        If String.IsNullOrWhiteSpace(BackendPath) Then BackendPath = OmniMixBackendManager.FindBackendExe()
+        If String.IsNullOrWhiteSpace(BackendPath) Then Return False
+
+        Dim State = Await GetServiceStateAsync()
+        If State = OmniMixServiceState.NotInstalled Then Return False
+
+        Dim CurrentPath = Await GetServiceBinaryPathAsync()
+        If ArePathsEqual(CurrentPath, BackendPath) Then Return True
+
+        Dim Args As New List(Of String) From {
+            "config",
+            ServiceName,
+            "binPath=",
+            """" & BackendPath & """"
+        }
+
+        Dim Normal = Await RunProcessAsync("sc.exe", Args)
+        If Normal.ExitCode = 0 Then Return True
+        Return Await RunElevatedAsync("sc.exe", Args)
+    End Function
+
     Public Async Function UninstallServiceAsync() As Task(Of Boolean)
         Await RunElevatedAsync("sc.exe", New List(Of String) From {"stop", ServiceName})
         Return Await RunElevatedAsync("sc.exe", New List(Of String) From {"delete", ServiceName})
     End Function
 
     Public Async Function StartServiceAsync() As Task(Of Boolean)
+        Await UpdateServiceBinaryPathAsync()
         Dim Normal = Await RunProcessAsync("sc.exe", New List(Of String) From {"start", ServiceName})
         If Normal.ExitCode = 0 Then Return True
         Return Await RunElevatedAsync("sc.exe", New List(Of String) From {"start", ServiceName})
