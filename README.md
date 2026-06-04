@@ -4,6 +4,8 @@ OmniMix VB.NET Compatible Frontend is a Windows desktop client for the existing 
 
 This repository is maintained as a frontend compatibility layer. Backend behavior should remain compatible with upstream OmniMix/ChillPatcher builds; frontend-side adapters are preferred when compatibility issues appear.
 
+The VB.NET UI layer is maintained alongside [QING.UIKIT](https://github.com/Dr-hydra/QING.UIKIT), the reusable WPF UI kit extracted from this frontend work.
+
 ## Status
 
 Version: `1.0.0`
