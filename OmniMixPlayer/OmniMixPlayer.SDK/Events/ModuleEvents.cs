@@ -166,20 +166,16 @@ namespace OmniMixPlayer.SDK.Events
 
     #endregion
 
-    #region 队列事件
+    #region Queue timeline events
 
-    public class QueueChangedEvent : ModuleEventBase
+    public class PlaybackTimelineChangedEvent : ModuleEventBase
     {
-        public QueueChangeType ChangeType { get; set; }
-        public int QueueLength { get; set; }
-    }
-
-    public enum QueueChangeType
-    {
-        Added,
-        Removed,
-        Cleared,
-        Reordered
+        public string InstanceId { get; set; }
+        public string CurrentUuid { get; set; }
+        public int ManualQueueLength { get; set; }
+        public int HistoryLength { get; set; }
+        public int SourceLength { get; set; }
+        public long Revision { get; set; }
     }
 
     #endregion

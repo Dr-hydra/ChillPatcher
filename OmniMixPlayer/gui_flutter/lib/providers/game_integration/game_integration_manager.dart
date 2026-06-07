@@ -1,5 +1,6 @@
 /// Game Integration (Mod Manager) state & deployment manager.
 /// Extracted from AppState during Riverpod migration.
+library;
 
 import 'dart:async';
 import 'dart:convert';
@@ -22,16 +23,12 @@ class GameIntegrationManager extends ChangeNotifier {
   final void Function(String? id) _clearActiveInstance;
 
   GameIntegrationManager({
-    required ApiClient Function() getApi,
+    required this._getApi,
     required bool Function() isOnline,
-    required int Function() getBackendPort,
-    required Future<void> Function() refreshPlayback,
-    required void Function(String?) clearActiveInstance,
-  }) : _getApi = getApi,
-       _isOnline = isOnline,
-       _getBackendPort = getBackendPort,
-       _refreshPlayback = refreshPlayback,
-       _clearActiveInstance = clearActiveInstance;
+    required this._getBackendPort,
+    required this._refreshPlayback,
+    required this._clearActiveInstance,
+  }) : _isOnline = isOnline;
 
   ApiClient get api => _getApi();
   bool get _backendOnline => _isOnline();
@@ -78,15 +75,17 @@ class GameIntegrationManager extends ChangeNotifier {
 
   BepInExStatus bepinexStatusFor(String gameId) {
     final game = _gameById(gameId);
-    final framework =
-        game == null ? frameworkById('bepinex_5') : primaryFrameworkForGame(game);
+    final framework = game == null
+        ? frameworkById('bepinex_5')
+        : primaryFrameworkForGame(game);
     if (framework == null) return BepInExStatus.notInstalled;
     return frameworkStatusFor(gameId, framework.id);
   }
 
   ModStatus modStatusFor(String gameId, [String? modId]) {
     final game = _gameById(gameId);
-    final resolvedModId = modId ?? (game == null ? null : primaryModForGame(game)?.id);
+    final resolvedModId =
+        modId ?? (game == null ? null : primaryModForGame(game)?.id);
     if (resolvedModId == null || resolvedModId.isEmpty) {
       return ModStatus.notInstalled;
     }
@@ -174,8 +173,7 @@ class GameIntegrationManager extends ChangeNotifier {
               BepInExStatus.notInstalled;
         }
         for (final mod in mods) {
-          _modStatuses[_modStatusKey(game.id, mod.id)] =
-              ModStatus.notInstalled;
+          _modStatuses[_modStatusKey(game.id, mod.id)] = ModStatus.notInstalled;
         }
         continue;
       }
@@ -294,8 +292,6 @@ class GameIntegrationManager extends ChangeNotifier {
     notifyListeners();
   }
 
-
-
   Future<bool> uninstallFramework({
     String gameId = 'chill_with_you',
     required String frameworkId,
@@ -322,8 +318,6 @@ class GameIntegrationManager extends ChangeNotifier {
     }
   }
 
-
-
   Future<bool> finalizeInstall({
     required String gameId,
     required String modId,
@@ -331,14 +325,14 @@ class GameIntegrationManager extends ChangeNotifier {
   }) async {
     final path = gamePathFor(gameId);
     if (path.isEmpty) return false;
-    
+
     _deploymentBusy = true;
     notifyListeners();
     try {
       final game = gameCatalog.firstWhere((g) => g.id == gameId);
       final mod = modById(modId);
       if (mod == null) return false;
-      
+
       if (inheritArchiveId != null &&
           inheritArchiveId.isNotEmpty &&
           _backendOnline) {
@@ -363,44 +357,47 @@ class GameIntegrationManager extends ChangeNotifier {
           }
         }
       }
+      addDeploymentLog('Backend online: $_backendOnline');
       if (_backendOnline) {
         final inst = ModDeploymentService.findInstanceByDir(path);
+        addDeploymentLog(
+          'Found instance by dir: ${inst != null ? inst.instanceId : "null"}',
+        );
         if (inst != null) {
           try {
+            addDeploymentLog(
+              'Calling setInstanceMeta(instanceId=${inst.instanceId}, modId=${mod.id}, gameName=${mod.name}, mode=${mod.mode}, caps=${mod.capabilities != null})...',
+            );
             await api.setInstanceMeta(
               inst.instanceId,
               mod.id,
               mod.name,
               mod.mode,
+              capabilities: mod.capabilities,
             );
-            final defaultProfile = {
-              'ActiveQueueId': 'default',
-              'Volume': 1.0,
-              'Queues': [
-                {
-                  'Id': 'default',
-                  'Name': 'Default',
-                  'PlaylistSources': [],
-                  'SongUuids': [],
-                  'HistoryUuids': [],
-                  'Index': -1,
-                  'HistoryPosition': -1,
-                  'PlaylistPosition': 0,
-                  'Shuffle': false,
-                  'RepeatMode': 'none',
-                },
-              ],
-            };
+            addDeploymentLog('setInstanceMeta succeeded');
+            final defaultProfile = {'volume': 1.0};
             await api.updateInstanceProfile(inst.instanceId, defaultProfile);
+            addDeploymentLog('updateInstanceProfile succeeded');
           } catch (e) {
             addDeploymentLog('Warning: failed to save instance metadata ($e)');
           }
+        } else {
+          addDeploymentLog(
+            'Warning: findInstanceByDir returned null for path=$path',
+          );
         }
+      } else {
+        addDeploymentLog(
+          'Warning: backend not online, skipping instance registration',
+        );
       }
-      
+
       refreshModStatuses(gameId);
       refreshInstances();
+      addDeploymentLog('Calling refreshPlayback...');
       await _refreshPlayback();
+      addDeploymentLog('refreshPlayback completed');
       return true;
     } finally {
       _deploymentBusy = false;
@@ -414,7 +411,7 @@ class GameIntegrationManager extends ChangeNotifier {
   }) async {
     final path = gamePathFor(gameId);
     if (path.isEmpty) return false;
-    
+
     _deploymentBusy = true;
     notifyListeners();
     try {

@@ -19,6 +19,10 @@ namespace OmniMixPlayer.Backend.Audio
         public InstanceProfileStore ProfileStore => _store;
 
         public event Action OnChanged;
+        public event Action<string> OnProfileChanged;
+        public event Action<string, float> OnVolumeChanged;
+        public event Action<string, float> OnLatencyChanged;
+        public event Action<string, SDK.Protos.Models.EqualizerState> OnEqualizerChanged;
 
         public InstanceRegistry(InstanceProfileStore store, ILogger logger)
         {
@@ -44,17 +48,15 @@ namespace OmniMixPlayer.Backend.Audio
                 Kind = req.Kind,
                 ModId = req.ModId ?? existing.ModId,
                 GameName = req.GameName ?? existing.GameName,
-                Capabilities = req.Capabilities ?? existing.Capabilities ?? new InstanceCapabilities(),
+                Capabilities = MergeCapabilities(req.Capabilities, existing.Capabilities),
                 Volume = existing.Volume,
                 TargetLatency = existing.TargetLatency,
                 Equalizer = existing.Equalizer ?? new SDK.Protos.Models.EqualizerState { SoftClipEnabled = true },
-                ActiveQueueId = existing.ActiveQueueId ?? "default",
-                PlaybackQueue = existing.PlaybackQueue ?? new PlaybackQueueState { ActiveQueueId = existing.ActiveQueueId ?? "default" },
+                PlaybackTimeline = EnsureTimeline(existing.PlaybackTimeline),
                 CreatedAt = existing.CreatedAt ?? new OmniTimestamp { Seconds = now }
             };
             merged.ImportedPlaylistIds.AddRange(existing.ImportedPlaylistIds);
             merged.PinnedTagIds.AddRange(existing.PinnedTagIds);
-            merged.Queues.AddRange(existing.Queues);
 
             _store.Upsert(merged);
             OnChanged?.Invoke();
@@ -70,6 +72,7 @@ namespace OmniMixPlayer.Backend.Audio
             profile.Id = SanitizeId(profile.Id);
             _store.Upsert(profile);
             OnChanged?.Invoke();
+            OnProfileChanged?.Invoke(profile.Id);
         }
 
         public bool Delete(string id)
@@ -102,25 +105,42 @@ namespace OmniMixPlayer.Backend.Audio
             return profile;
         }
 
-        public void SaveVolume(string id, float volume) { _store.SaveVolume(SanitizeId(id), volume); }
-        public void SaveTargetLatency(string id, float latency) { _store.SaveTargetLatency(SanitizeId(id), latency); }
-        public void SaveEqualizer(string id, SDK.Protos.Models.EqualizerState eq) { _store.SaveEqualizer(SanitizeId(id), eq); }
-        public void SavePlaybackQueue(string id, PlaybackQueueState queue)
+        public void SaveVolume(string id, float volume)
         {
-            var profile = _store.Get(SanitizeId(id));
-            profile.PlaybackQueue = queue ?? new PlaybackQueueState { ActiveQueueId = profile.ActiveQueueId ?? "default" };
-            profile.ActiveQueueId = profile.PlaybackQueue.ActiveQueueId;
+            id = SanitizeId(id);
+            _store.SaveVolume(id, volume);
+            // Volume doesn't affect InstanceSummary — light push only.
+            OnProfileChanged?.Invoke(id);
+            OnVolumeChanged?.Invoke(id, volume);
+        }
+
+        public void SaveTargetLatency(string id, float latency)
+        {
+            id = SanitizeId(id);
+            _store.SaveTargetLatency(id, latency);
+            // Latency doesn't affect InstanceSummary — light push only.
+            OnProfileChanged?.Invoke(id);
+            OnLatencyChanged?.Invoke(id, latency);
+        }
+
+        public void SaveEqualizer(string id, SDK.Protos.Models.EqualizerState eq)
+        {
+            id = SanitizeId(id);
+            _store.SaveEqualizer(id, eq);
+            // EQ doesn't affect InstanceSummary — light push only.
+            OnProfileChanged?.Invoke(id);
+            OnEqualizerChanged?.Invoke(id, eq);
+        }
+        public void SavePlaybackTimeline(string id, PlaybackTimelineState timeline)
+        {
+            id = SanitizeId(id);
+            var profile = _store.Get(id);
+            profile.PlaybackTimeline = EnsureTimeline(timeline);
             profile.ImportedPlaylistIds.Clear();
-            profile.ImportedPlaylistIds.AddRange(profile.PlaybackQueue.PlaylistSources.Select(s => s.Id));
-            profile.Queues.Clear();
-            profile.Queues.Add(new QueueInfo
-            {
-                Id = profile.PlaybackQueue.ActiveQueueId ?? "default",
-                Name = "Default",
-                SongCount = profile.PlaybackQueue.QueueUuids.Count
-            });
+            profile.ImportedPlaylistIds.AddRange(profile.PlaybackTimeline.PlaylistSources.Select(s => s.Id));
             _store.Upsert(profile);
             OnChanged?.Invoke();
+            OnProfileChanged?.Invoke(id);
         }
 
         public List<InstanceSummary> ListSummaries(PlaybackSessionManager sessions = null)
@@ -130,20 +150,71 @@ namespace OmniMixPlayer.Backend.Audio
             foreach (var p in allProfiles)
             {
                 var online = sessions?.IsOnline(p.Id) ?? false;
+                var session = sessions?.Get(p.Id);
+                var connectedAt = (session != null && online)
+                    ? new OmniTimestamp { Seconds = new DateTimeOffset(session.CreatedAt).ToUnixTimeSeconds() }
+                    : null;
+
                 summaries.Add(new InstanceSummary
                 {
                     Id = p.Id,
                     DisplayName = p.DisplayName,
                     Kind = p.Kind,
                     IsOnline = online,
-                    CurrentTrackUuid = sessions?.GetCurrentTrackUuid(p.Id) ?? "",
-                    QueueCount = sessions?.GetQueueCount(p.Id) ?? 0
+                    CurrentTrackUuid = p.PlaybackTimeline?.CurrentUuid ?? "",
+                    QueueCount = p.PlaybackTimeline?.ManualQueueUuids.Count ?? 0,
+                    ModId = p.ModId ?? "",
+                    GameName = p.GameName ?? "",
+                    ConnectedAt = connectedAt
                 });
             }
             return summaries;
         }
 
+        /// <summary>
+        /// Merge capabilities: use the request's booleans, but preserve existing limit
+        /// values (max_imported_playlists, etc.) when the request doesn't specify them.
+        /// This is needed because the native C SDK only carries boolean flags and
+        /// cannot express limits — limits are declared by the Flutter mod catalog.
+        /// </summary>
+        private static InstanceCapabilities MergeCapabilities(InstanceCapabilities req, InstanceCapabilities existing)
+        {
+            var merged = req ?? existing ?? new InstanceCapabilities();
+            if (req != null && existing != null)
+            {
+                // Preserve existing limits unless req explicitly overrides with a positive value.
+                // Native SDK may set MaxImportedPlaylists=0 with Has=true; treat 0 as "not set".
+                if (!req.HasMaxImportedPlaylists || req.MaxImportedPlaylists <= 0)
+                {
+                    if (existing.HasMaxImportedPlaylists)
+                        merged.MaxImportedPlaylists = existing.MaxImportedPlaylists;
+                }
+                if (!req.HasMaxTags || req.MaxTags <= 0)
+                {
+                    if (existing.HasMaxTags)
+                        merged.MaxTags = existing.MaxTags;
+                }
+                if (!req.HasMaxPlaylistEntries || req.MaxPlaylistEntries <= 0)
+                {
+                    if (existing.HasMaxPlaylistEntries)
+                        merged.MaxPlaylistEntries = existing.MaxPlaylistEntries;
+                }
+            }
+            return merged;
+        }
+
         private static string SanitizeId(string id) => (id ?? "").Replace("..", "").Replace("/", "").Replace("\\", "").Trim();
+
+        private static PlaybackTimelineState EnsureTimeline(PlaybackTimelineState timeline)
+        {
+            timeline ??= new PlaybackTimelineState();
+            timeline.Version = 2;
+            if (timeline.SourceCursor == 0 && timeline.SourceUuids.Count == 0)
+                timeline.SourceCursor = -1;
+            if (timeline.CurrentSourceIndex == 0 && string.IsNullOrWhiteSpace(timeline.CurrentUuid))
+                timeline.CurrentSourceIndex = -1;
+            return timeline;
+        }
 
         public void Dispose() => _store?.Dispose();
     }

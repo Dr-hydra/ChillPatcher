@@ -15,7 +15,7 @@ namespace ChillPatcher.UIFramework.Music
     /// </summary>
     public class PlaylistListBuilder
     {
-        private static readonly BepInEx.Logging.ManualLogSource Logger = 
+        private static readonly BepInEx.Logging.ManualLogSource Logger =
             BepInEx.Logging.Logger.CreateLogSource("PlaylistBuilder");
 
         public PlaylistListBuilder()
@@ -30,10 +30,25 @@ namespace ChillPatcher.UIFramework.Music
             bool loadCovers = true)
         {
             var result = new List<PlaylistListItem>();
-            Logger.LogInfo($"BuildWithAlbumHeaders called with {songs?.Count ?? 0} songs");
 
             if (songs == null || songs.Count == 0)
                 return result;
+
+            // Album headers disabled — current tag-bit based playlist model incompatible.
+            // Flat list: just wrap each song as a PlaylistListItem.
+            for (int i = 0; i < songs.Count; i++)
+            {
+                result.Add(PlaylistListItem.CreateSongItem(songs[i], i));
+            }
+            return result;
+        }
+
+        // ReSharper disable once UnusedMember.Local
+        private async Task<List<PlaylistListItem>> BuildWithAlbumHeaders_Legacy(
+            IReadOnlyList<GameAudioInfo> songs,
+            bool loadCovers = true)
+        {
+            var result = new List<PlaylistListItem>();
 
             var groups = new List<AlbumGroup>();
             var groupMap = new Dictionary<string, AlbumGroup>();
@@ -59,6 +74,9 @@ namespace ChillPatcher.UIFramework.Music
 
             foreach (var group in groups)
             {
+                // 单曲专辑不渲染专辑头，直接列出歌曲
+                bool isSingleSongGroup = group.Songs.Count <= 1;
+
                 AlbumHeaderInfo header;
                 if (!string.IsNullOrEmpty(group.AlbumId))
                 {
@@ -91,7 +109,10 @@ namespace ChillPatcher.UIFramework.Music
                     };
                 }
 
-                result.Add(PlaylistListItem.CreateAlbumHeader(header));
+                if (!isSingleSongGroup)
+                {
+                    result.Add(PlaylistListItem.CreateAlbumHeader(header));
+                }
 
                 foreach (var swi in group.Songs)
                 {

@@ -30,6 +30,19 @@ namespace OmniMixPlayer.Backend.Audio
         public static void RequirePlaylistManagement(InstanceCapabilities caps, string op)
             => Require(caps, op, caps.PlaylistManagement, "playlist management not available");
 
+        public static void RequirePlaylistSourceLimit(InstanceCapabilities caps, string op, int sourceCount)
+        {
+            if (caps == null) return;
+
+            if (!caps.MultiplePlaylists && sourceCount > 1)
+                throw new RpcException(new Status(StatusCode.FailedPrecondition,
+                    $"Operation '{op}' exceeds this instance playlist source limit: {sourceCount}/1"));
+
+            if (caps.HasMaxImportedPlaylists && sourceCount > caps.MaxImportedPlaylists)
+                throw new RpcException(new Status(StatusCode.FailedPrecondition,
+                    $"Operation '{op}' exceeds this instance imported playlist limit: {sourceCount}/{caps.MaxImportedPlaylists}"));
+        }
+
         public static void RequireVolumeControl(InstanceCapabilities caps, string op)
             => Require(caps, op, caps.VolumeControl, "volume control not available");
 
@@ -63,7 +76,6 @@ namespace OmniMixPlayer.Backend.Audio
             return profile?.Capabilities ?? new InstanceCapabilities
             {
                 ServerControlledPlayback = true,
-                ClientManagedPlayback = true,
                 QueueManagement = true,
                 PlaylistManagement = true,
                 TagFiltering = true,

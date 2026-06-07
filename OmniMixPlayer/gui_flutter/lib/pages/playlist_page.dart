@@ -25,15 +25,20 @@ class _AlbumNode {
   List<Track> songs;
   bool expanded;
 
-  _AlbumNode(this.album, {this.songs = const [], this.expanded = false});
+  _AlbumNode(this.album, {this.songs = const []}) : expanded = false;
 }
 
 class _PlaylistNode {
   final Playlist playlist;
   final List<_AlbumNode> albums;
+  final List<Track> looseSongs;
   bool expanded;
 
-  _PlaylistNode(this.playlist, this.albums, {this.expanded = false});
+  _PlaylistNode(
+    this.playlist,
+    this.albums, {
+    this.looseSongs = const [],
+  }) : expanded = false;
 }
 
 // ── 扁平列表条目（供 ListView.builder 虚拟滚动） ──
@@ -74,10 +79,12 @@ class _PlaylistPageState extends State<PlaylistPage> {
   String _error = '';
   int _totalSongs = 0;
   int _lastLibGen = 0;
+  int _loadSerial = 0;
 
   @override
   void initState() {
     super.initState();
+    _lastLibGen = widget.state.libraryGeneration;
     widget.state.addListener(_onStateChanged);
     if (widget.state.backendOnline) _loadTree();
   }
@@ -106,6 +113,7 @@ class _PlaylistPageState extends State<PlaylistPage> {
 
   Future<void> _loadTree() async {
     if (!widget.state.backendOnline) return;
+    final loadSerial = ++_loadSerial;
     setState(() {
       _loading = true;
       _error = '';
@@ -113,14 +121,19 @@ class _PlaylistPageState extends State<PlaylistPage> {
     try {
       final playlists = await widget.state.api.getPlaylists();
       final allAlbums = await widget.state.api.getAlbums();
-      if (!mounted) return;
+      if (!mounted || loadSerial != _loadSerial) return;
 
-      _tree.clear();
+      final nextTree = <_PlaylistNode>[];
       var total = 0;
       for (final playlist in playlists) {
-        final playlistSongs = await widget.state.api.getSongs(playlistId: playlist.id);
-        if (!mounted) return;
-        final tagAlbumIds = playlistSongs.map((s) => s.albumId).toSet();
+        final playlistSongs = await widget.state.api.getSongs(
+          playlistId: playlist.id,
+        );
+        if (!mounted || loadSerial != _loadSerial) return;
+        final tagAlbumIds = playlistSongs
+            .map((s) => s.albumId)
+            .where((id) => id.trim().isNotEmpty)
+            .toSet();
         final filteredAlbums = allAlbums
             .where((a) => tagAlbumIds.contains(a.id))
             .toList();
@@ -132,36 +145,61 @@ class _PlaylistPageState extends State<PlaylistPage> {
           albumNodes.add(_AlbumNode(album, songs: albumSongs));
           total += albumSongs.length;
         }
-        _tree.add(_PlaylistNode(playlist, albumNodes));
+        final albumIds = filteredAlbums.map((a) => a.id).toSet();
+        final looseSongs = playlistSongs
+            .where(
+              (s) =>
+                  s.albumId.trim().isEmpty || !albumIds.contains(s.albumId),
+            )
+            .toList();
+        total += looseSongs.length;
+        nextTree.add(
+          _PlaylistNode(playlist, albumNodes, looseSongs: looseSongs),
+        );
       }
+      if (!mounted || loadSerial != _loadSerial) return;
+      _tree
+        ..clear()
+        ..addAll(nextTree);
       _totalSongs = total;
       _rebuildFlatList();
     } catch (e) {
-      if (mounted) {
+      if (mounted && loadSerial == _loadSerial) {
         final l10n = context.mounted ? AppLocalizations.of(context) : null;
         _error =
             l10n?.loadLibraryFailed(e.toString()) ??
             'Failed to load library: $e';
       }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && loadSerial == _loadSerial) {
+        setState(() => _loading = false);
+      }
     }
   }
 
   // ── 根据展开状态重建扁平列表（虚拟滚动数据源） ──
 
   void _rebuildFlatList() {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     _flatItems.clear();
     for (final playlistNode in _tree) {
+      final subtitleParts = <String>[
+        playlistNode.playlist.moduleId,
+        l10n.albumCountLabel(playlistNode.albums.length),
+      ];
+      if (playlistNode.looseSongs.isNotEmpty) {
+        subtitleParts.add(l10n.songCountLabel(playlistNode.looseSongs.length));
+      }
+
       _flatItems.add(
         _FlatItem(
           kind: _ItemKind.playlist,
           label: playlistNode.playlist.name,
-          subtitle:
-              '${playlistNode.playlist.moduleId} • ${l10n.albumCountLabel(playlistNode.albums.length)}',
+          subtitle: subtitleParts.join(' • '),
           indentLevel: 0,
-          expandable: playlistNode.albums.isNotEmpty,
+          expandable:
+              playlistNode.albums.isNotEmpty ||
+              playlistNode.looseSongs.isNotEmpty,
           expanded: playlistNode.expanded,
           playlist: playlistNode.playlist,
         ),
@@ -193,6 +231,18 @@ class _PlaylistPageState extends State<PlaylistPage> {
             ),
           );
         }
+      }
+
+      for (final song in playlistNode.looseSongs) {
+        _flatItems.add(
+          _FlatItem(
+            kind: _ItemKind.song,
+            label: song.title,
+            subtitle: song.artist,
+            indentLevel: 1,
+            song: song,
+          ),
+        );
       }
     }
     setState(() {});
@@ -230,7 +280,7 @@ class _PlaylistPageState extends State<PlaylistPage> {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     final cs = Theme.of(context).colorScheme;
 
     if (!widget.state.backendOnline) {
@@ -502,6 +552,7 @@ class _PlaylistPageState extends State<PlaylistPage> {
   Widget _buildSongRow(_FlatItem item, ColorScheme cs) {
     final uuid = item.song?.uuid ?? '';
     final duration = item.song?.duration ?? 0.0;
+    final leftPadding = item.indentLevel <= 1 ? 68.0 : 112.0;
 
     return InkWell(
       onTap: () {
@@ -510,7 +561,12 @@ class _PlaylistPageState extends State<PlaylistPage> {
         }
       },
       child: Padding(
-        padding: const EdgeInsets.only(left: 112, right: 20, top: 0, bottom: 0),
+        padding: EdgeInsets.only(
+          left: leftPadding,
+          right: 20,
+          top: 0,
+          bottom: 0,
+        ),
         child: SizedBox(
           height: 48,
           child: Row(
@@ -600,7 +656,7 @@ class _Cover extends StatelessWidget {
     return Image.network(
       '$baseUrl/api/track/cover?uuid=$uuid',
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => Container(
+      errorBuilder: (_, _, _) => Container(
         color: cs.surfaceContainerHighest,
         child: Center(
           child: Icon(
@@ -621,7 +677,7 @@ class _Cover extends StatelessWidget {
               child: CircularProgressIndicator(
                 value: progress.expectedTotalBytes != null
                     ? progress.cumulativeBytesLoaded /
-                        progress.expectedTotalBytes!
+                          progress.expectedTotalBytes!
                     : null,
                 strokeWidth: 1.5,
               ),

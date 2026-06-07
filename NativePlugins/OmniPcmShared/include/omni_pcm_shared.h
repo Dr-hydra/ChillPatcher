@@ -140,7 +140,6 @@ typedef enum OmniPcmInstanceKind {
 
 typedef enum OmniPcmCapabilityFlags {
     OMNI_PCM_CAP_SERVER_CONTROLLED_PLAYBACK = 1u << 0,
-    OMNI_PCM_CAP_CLIENT_MANAGED_PLAYBACK = 1u << 1,
     OMNI_PCM_CAP_QUEUE_MANAGEMENT = 1u << 2,
     OMNI_PCM_CAP_PLAYLIST_MANAGEMENT = 1u << 3,
     OMNI_PCM_CAP_SHUFFLE = 1u << 4,
@@ -152,7 +151,8 @@ typedef enum OmniPcmCapabilityFlags {
     OMNI_PCM_CAP_TAG_FILTERING = 1u << 10,
     OMNI_PCM_CAP_UNLIMITED_TAGS = 1u << 11,
     OMNI_PCM_CAP_ALBUM_FILTERING = 1u << 12,
-    OMNI_PCM_CAP_AUDIO_PLAYBACK = 1u << 13
+    OMNI_PCM_CAP_AUDIO_PLAYBACK = 1u << 13,
+    OMNI_PCM_CAP_CUSTOM_SYSTEM_MEDIA_SERVICE = 1u << 14
 } OmniPcmCapabilityFlags;
 
 typedef struct OmniPcmClientConfig {
@@ -169,6 +169,9 @@ typedef struct OmniPcmConnectOptions {
     int32_t kind;
     uint32_t capability_flags;
     int32_t no_instance;
+    int32_t max_imported_playlists;  /* 0 = unspecified / no limit */
+    int32_t max_tags;
+    int32_t max_playlist_entries;
 } OmniPcmConnectOptions;
 
 typedef struct OmniPcmConnectionInfo {
@@ -199,6 +202,8 @@ typedef struct OmniPcmInstanceSummaryInfo {
     int32_t kind;
     int32_t is_online;
     int32_t queue_count;
+    int32_t mode;
+    int64_t connected_at;
 } OmniPcmInstanceSummaryInfo;
 
 typedef struct OmniPcmInstanceProfileInfo {
@@ -206,11 +211,16 @@ typedef struct OmniPcmInstanceProfileInfo {
     char display_name[256];
     char mod_id[128];
     char game_name[256];
-    char active_queue_id[128];
     int32_t kind;
     uint32_t capability_flags;
     float volume;
     float target_latency;
+    int32_t mode;
+    int32_t max_imported_playlists;
+    int32_t max_tags;
+    int32_t max_playlist_entries;
+    int64_t created_at;
+    int64_t updated_at;
 } OmniPcmInstanceProfileInfo;
 
 typedef struct OmniPcmQueueTrackInfo {
@@ -344,6 +354,8 @@ typedef struct OmniPcmEventInfo {
     int32_t bool_value;
     int32_t song_count;
     int32_t instance_count;
+    float volume;
+    float latency;
 } OmniPcmEventInfo;
 
 typedef void (*OmniPcmEventCallback)(const OmniPcmEventInfo* event_info, void* user_data);

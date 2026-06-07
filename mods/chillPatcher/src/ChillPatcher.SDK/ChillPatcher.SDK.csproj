@@ -32,6 +32,8 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 
+  <!-- 原生 SDK DLL 由 CoreDependencyLoader 从 native/x64/ 预加载；此处不再复制 -->
+
   <!-- SDK 不依赖游戏 DLL，只依赖基础 Unity 类型 -->
   <ItemGroup>
     <!-- Unity Engine (基础类型) -->

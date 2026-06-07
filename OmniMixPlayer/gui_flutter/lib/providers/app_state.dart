@@ -13,6 +13,7 @@ import '../generated/omni_mix_player/services/playback.pb.dart';
 import '../services/api_client.dart';
 import '../services/ws_client.dart';
 import '../services/floating_window_service.dart';
+import '../services/flutter_pcm_playback_service.dart';
 import '../services/backend_manager.dart'
     if (dart.library.js_interop) '../stubs/backend_manager_web.dart';
 import '../services/platform_service.dart'
@@ -69,6 +70,9 @@ class AppState extends ChangeNotifier {
   String get backendBind => _backend.bind;
   bool get autostart => _backend.autostart;
   bool get minimizeToTray => _backend.minimizeToTray;
+  String? get audioOutputDeviceId => _backend.audioOutputDeviceId;
+  List<AudioOutputDevice> get audioOutputDevices => _backend.audioOutputDevices;
+  NativeAudioState get nativeAudioState => _backend.nativeAudioState;
   Future<void> startBackend() => _backend.start();
   Future<void> stopBackend() => _backend.stop();
   Future<void> toggleBackend() => _backend.toggle();
@@ -105,6 +109,12 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
+  Future<void> refreshAudioOutputDevices() =>
+      _backend.refreshAudioOutputDevices();
+
+  Future<void> setAudioOutputDevice(String? deviceId) =>
+      _backend.setAudioOutputDevice(deviceId);
+
   // ── Service ──
   String get serviceState => _service.state;
   bool get serviceBusy => _service.busy;
@@ -122,6 +132,9 @@ class AppState extends ChangeNotifier {
   List<QueueTrack> get activeHistory => _playback.activeHistory;
   List<QueueTrack> get activePlaylist => _playback.activePlaylist;
   List<PlaylistSourceState> get playlistSources => _playback.playlistSources;
+  int? get activePlaylistSourceLimit => _playback.activePlaylistSourceLimit;
+  bool get activePlaylistSourceLimitReached =>
+      _playback.activePlaylistSourceLimitReached;
   bool get playbackLoading => _playback.loading;
   double get lastVolume => _playback.lastVolume;
   double get lastTargetLatency => _playback.lastTargetLatency;
@@ -129,6 +142,11 @@ class AppState extends ChangeNotifier {
   int get attachedAudioClientCount => _playback.attachedAudioClientCount;
   InstanceSummary? get activeInstance => _playback.activeInstance;
   bool get canControlActiveInstance => _playback.canControlActiveInstance;
+  bool get canPlayPauseActiveInstance => _playback.canPlayPauseActiveInstance;
+  bool get canSeekActiveInstance => _playback.canSeekActiveInstance;
+  bool get canSetVolumeActiveInstance => _playback.canSetVolumeActiveInstance;
+  bool get canSetLatencyActiveInstance => _playback.canSetLatencyActiveInstance;
+  bool get canEqualizeActiveInstance => _playback.canEqualizeActiveInstance;
   bool get canManageActiveLibrary => _playback.canManageActiveLibrary;
   PlaybackStatus? get playbackStatus => _playback.status;
   String get currentTrackTitle => _playback.currentTitle;
@@ -143,6 +161,8 @@ class AppState extends ChangeNotifier {
   bool canControlInstance(String id) => _playback.canControlInstance(id);
   bool canManageInstanceLibrary(String id) =>
       _playback.canManageInstanceLibrary(id);
+  bool canAddOrReplacePlaylistSource(String sourceId) =>
+      _playback.canAddOrReplacePlaylistSource(sourceId);
   bool hasCapability(bool Function(InstanceCapabilities c) check) =>
       _playback.hasCapability(check);
   Set<String> get backendInstanceIds => _playback.backendInstanceIds;
@@ -523,7 +543,8 @@ class AppState extends ChangeNotifier {
       m.addListener(() => notifyListeners());
     }
 
-    _backend.onNeedRefreshPlayback = () => _playback.refreshPlayback();
+    _backend.onNeedRefreshPlayback = () =>
+        _playback.refreshPlayback(syncMediaControls: true);
     _backend.onNeedRefreshArchives = () => _game.refreshBackendArchives();
     _backend.onNeedLoadModules = () => _modules.loadModules();
     _backend.onNeedLoadActiveProfile = () => _playback.loadActiveProfile();
@@ -539,7 +560,15 @@ class AppState extends ChangeNotifier {
         _playback.applyStateChanged(id, state);
     _backend.onPositionChanged = (id, position) =>
         _playback.applyPositionChanged(id, position);
+    _backend.onVolumeChanged = (id, volume) =>
+        _playback.applyVolumeChanged(id, volume);
+    _backend.onLatencyChanged = (id, latency) =>
+        _playback.applyLatencyChanged(id, latency);
     _backend.onEqualizerChanged = () {
+      _equalizerGeneration++;
+      notifyListeners();
+    };
+    _backend.onEqualizerPushed = (id, eq) {
       _equalizerGeneration++;
       notifyListeners();
     };
@@ -611,8 +640,8 @@ class AppState extends ChangeNotifier {
           seedColor: _seedColor,
           useSystemColor: _useSystemColor,
           themeMode: _themeMode.name,
-          canControl: canControlActiveInstance,
-          canSeek: canControlActiveInstance,
+          canControl: canPlayPauseActiveInstance,
+          canSeek: canSeekActiveInstance,
           hasTrack: trackUuid.isNotEmpty,
           isPlaying: isPlaying,
           uuid: trackUuid,

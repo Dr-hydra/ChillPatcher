@@ -90,12 +90,10 @@ class _HomePageState extends State<HomePage> {
     if (elapsed >= 150) {
       _executeSendVolume();
     } else {
-      if (_volumeThrottleTimer == null) {
-        _volumeThrottleTimer = Timer(Duration(milliseconds: 150 - elapsed), () {
+      _volumeThrottleTimer ??= Timer(Duration(milliseconds: 150 - elapsed), () {
           _volumeThrottleTimer = null;
           _executeSendVolume();
         });
-      }
     }
   }
 
@@ -130,15 +128,13 @@ class _HomePageState extends State<HomePage> {
     if (elapsed >= 150) {
       _executeSendLatency();
     } else {
-      if (_latencyThrottleTimer == null) {
-        _latencyThrottleTimer = Timer(
+      _latencyThrottleTimer ??= Timer(
           Duration(milliseconds: 150 - elapsed),
           () {
             _latencyThrottleTimer = null;
             _executeSendLatency();
           },
         );
-      }
     }
   }
 
@@ -181,7 +177,7 @@ class _HomePageState extends State<HomePage> {
     } catch (e) {
       if (!mounted) return;
       final l10n = AppLocalizations.of(context);
-      setState(() => _error = l10n!.failedToLoadLibrary('$e'));
+      setState(() => _error = l10n.failedToLoadLibrary('$e'));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -189,7 +185,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     final busy = widget.state.backendBusy || widget.state.serviceBusy;
     if (busy) {
       return _LoadingHome(
@@ -264,11 +260,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildNowPlaying({bool minimalClientMode = false}) {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     final cs = Theme.of(context).colorScheme;
     final instance = widget.state.activeInstance;
     final trackUuid = instance?.currentTrackUuid ?? '';
     final canControl = widget.state.canControlActiveInstance;
+    final canPlayPause = widget.state.canPlayPauseActiveInstance;
+
     final title = (widget.state.currentTrackTitle.isNotEmpty)
         ? widget.state.currentTrackTitle
         : (trackUuid.isNotEmpty ? trackUuid : l10n.noSongPlaying);
@@ -276,9 +274,9 @@ class _HomePageState extends State<HomePage> {
     final duration = widget.state.currentTrackDuration;
     final isPlaying = widget.state.isPlaying;
     final position = _draggingPosition ?? widget.state.currentTrackPosition;
-    final canSeek = canControl;
-    final canSetVolume = canControl;
-    final canSetLatency = canControl;
+    final canSeek = widget.state.canSeekActiveInstance;
+    final canSetVolume = widget.state.canSetVolumeActiveInstance;
+    final canSetLatency = widget.state.canSetLatencyActiveInstance;
 
     return _Panel(
       child: Column(
@@ -333,7 +331,7 @@ class _HomePageState extends State<HomePage> {
                   tooltip: l10n.previous,
                 ),
                 IconButton(
-                  onPressed: canControl ? widget.state.togglePlayback : null,
+                  onPressed: canPlayPause ? widget.state.togglePlayback : null,
                   icon: Icon(
                     isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
                   ),
@@ -483,7 +481,7 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 6),
           Text(
-            canControl
+            canPlayPause
                 ? l10n.serverControlMode
                 : l10n.clientModeControlsDisabled,
             style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
@@ -494,7 +492,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildQueuePanel() {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     final canQueue = widget.state.canControlActiveInstance;
     return _Panel(
       child: Column(
@@ -537,9 +535,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildReorderList(List<QueueTrack> items, {required bool isQueue}) {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     final canQueue = widget.state.canControlActiveInstance;
-    final canPlayback = widget.state.canControlActiveInstance;
+    final canPlayback = widget.state.canPlayPauseActiveInstance;
     if (items.isEmpty) return Center(child: Text(l10n.empty));
 
     return ReorderableListView.builder(
@@ -555,7 +553,7 @@ class _HomePageState extends State<HomePage> {
                 await widget.state.moveHistoryItem(oldIndex, to);
               }
             }
-          : (_, __) {},
+          : (_, _) {},
       itemBuilder: (_, i) {
         final s = items[i];
         return _SongRow(
@@ -588,14 +586,21 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildLibraryPanel() {
-    final l10n = AppLocalizations.of(context)!;
-    if (_loading)
+    final l10n = AppLocalizations.of(context);
+    if (_loading) {
       return const _Panel(child: Center(child: CircularProgressIndicator()));
-    if (_error.isNotEmpty)
+    }
+    if (_error.isNotEmpty) {
       return _Panel(child: Center(child: Text(l10n.errorWithMessage(_error))));
+    }
 
     final canManagePlaylist = widget.state.canManageActiveLibrary;
     final canAddSources = canManagePlaylist;
+    final sourceLimit = widget.state.activePlaylistSourceLimit;
+    final sourceCount = widget.state.playlistSources.length;
+    final sourceLimitLabel = sourceLimit == null
+        ? '$sourceCount'
+        : '$sourceCount/$sourceLimit';
     return _Panel(
       child: Column(
         children: [
@@ -621,6 +626,21 @@ class _HomePageState extends State<HomePage> {
                     setState(() => _libraryView = s.first),
               ),
               const Spacer(),
+              if (canManagePlaylist) ...[
+                Tooltip(
+                  message: l10n.selectedCount(sourceCount),
+                  child: Text(
+                    sourceLimitLabel,
+                    style: TextStyle(
+                      color: widget.state.activePlaylistSourceLimitReached
+                          ? Theme.of(context).colorScheme.error
+                          : Theme.of(context).colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
               if (canAddSources)
                 IconButton(
                   onPressed: _showAddSourceSheet,
@@ -646,9 +666,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildLibraryList(bool canControl) {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     final songs = _filteredSongs();
-    final canPlayback = widget.state.canControlActiveInstance;
+    final canPlayback = widget.state.canPlayPauseActiveInstance;
     final canQueue = widget.state.canControlActiveInstance;
     final selectedSourceIds = widget.state.playlistSources
         .map((s) => s.id)
@@ -659,6 +679,7 @@ class _HomePageState extends State<HomePage> {
         itemCount: songs.length,
         itemBuilder: (_, i) {
           final s = songs[i];
+          final trackSourceId = 'track_${s.uuid}';
           return _SongRow(
             song: s,
             canControl: canControl || canPlayback || canQueue,
@@ -676,7 +697,9 @@ class _HomePageState extends State<HomePage> {
                 ? () => widget.state.setSongExcluded(s.uuid, !(s.isExcluded))
                 : null,
             onAddToLibrary:
-                canControl && !selectedSourceIds.contains('track_${s.uuid}')
+                canControl &&
+                    !selectedSourceIds.contains(trackSourceId) &&
+                    widget.state.canAddOrReplacePlaylistSource(trackSourceId)
                 ? () => widget.state.addTrackToActivePlaylist(s)
                 : null,
             excluded: s.isExcluded,
@@ -738,8 +761,9 @@ class _HomePageState extends State<HomePage> {
             trailing: canControl && selectedSourceIds.contains('album_${a.id}')
                 ? PopupMenuButton<String>(
                     onSelected: (v) {
-                      if (v == 'remove')
+                      if (v == 'remove') {
                         widget.state.removePlaylistSource('album_${a.id}');
+                      }
                     },
                     itemBuilder: (_) => [
                       PopupMenuItem(
@@ -881,7 +905,7 @@ class _HomePageState extends State<HomePage> {
       _songs.where((s) => s.albumId == albumId).length;
 
   void _showAddSourceSheet() {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -891,6 +915,10 @@ class _HomePageState extends State<HomePage> {
               .map((s) => s.id)
               .toSet();
           final canUseSources = widget.state.canManageActiveLibrary;
+          final sourceLimit = widget.state.activePlaylistSourceLimit;
+          final selectedLabel = sourceLimit == null
+              ? l10n.selectedCount(selectedIds.length)
+              : '${selectedIds.length}/$sourceLimit';
           return SizedBox(
             height: MediaQuery.of(context).size.height * 0.82,
             child: DefaultTabController(
@@ -915,7 +943,7 @@ class _HomePageState extends State<HomePage> {
                           style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
                         const Spacer(),
-                        Text(l10n.selectedCount(selectedIds.length)),
+                        Text(selectedLabel),
                       ],
                     ),
                   ),
@@ -935,13 +963,19 @@ class _HomePageState extends State<HomePage> {
                             final p = _playlists[i];
                             final sourceId = 'playlist_${p.id}';
                             final checked = selectedIds.contains(sourceId);
+                            final canToggle =
+                                canUseSources &&
+                                (checked ||
+                                    widget.state.canAddOrReplacePlaylistSource(
+                                      sourceId,
+                                    ));
                             return CheckboxListTile(
                               value: checked,
                               controlAffinity: ListTileControlAffinity.leading,
                               secondary: const Icon(Icons.queue_music_rounded),
                               title: Text(p.name),
                               subtitle: Text(p.moduleId),
-                              onChanged: canUseSources
+                              onChanged: canToggle
                                   ? (v) async {
                                       if (v == null) return;
                                       if (v) {
@@ -977,6 +1011,12 @@ class _HomePageState extends State<HomePage> {
                                 widget.state.activePlaylist.any(
                                   (s) => s.albumId == a.id,
                                 );
+                            final canToggle =
+                                canUseSources &&
+                                (selectedIds.contains(sourceId) ||
+                                    widget.state.canAddOrReplacePlaylistSource(
+                                      sourceId,
+                                    ));
                             return CheckboxListTile(
                               value: checked,
                               controlAffinity: ListTileControlAffinity.leading,
@@ -995,7 +1035,7 @@ class _HomePageState extends State<HomePage> {
                                   a.moduleId,
                                 ),
                               ),
-                              onChanged: canUseSources
+                              onChanged: canToggle
                                   ? (v) async {
                                       if (v == null) return;
                                       if (v) {
@@ -1019,13 +1059,19 @@ class _HomePageState extends State<HomePage> {
                             final t = _tags[i];
                             final sourceId = 'tag_${t.id}';
                             final checked = selectedIds.contains(sourceId);
+                            final canToggle =
+                                canUseSources &&
+                                (checked ||
+                                    widget.state.canAddOrReplacePlaylistSource(
+                                      sourceId,
+                                    ));
                             return CheckboxListTile(
                               value: checked,
                               controlAffinity: ListTileControlAffinity.leading,
                               secondary: const Icon(Icons.folder_rounded),
                               title: Text(t.name),
                               subtitle: Text(t.moduleId),
-                              onChanged: canUseSources
+                              onChanged: canToggle
                                   ? (v) async {
                                       if (v == null) return;
                                       if (v) {
@@ -1139,7 +1185,7 @@ class _Cover extends StatelessWidget {
     return Image.network(
       '$baseUrl/api/track/cover?uuid=$uuid',
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => Container(
+      errorBuilder: (_, _, _) => Container(
         color: cs.surfaceContainerHighest,
         child: const Icon(Icons.broken_image_rounded),
       ),
@@ -1170,7 +1216,7 @@ class _AlbumCover extends StatelessWidget {
       child: Image.network(
         '$baseUrl/${album.coverUri}',
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const Icon(Icons.album_rounded),
+        errorBuilder: (_, _, _) => const Icon(Icons.album_rounded),
       ),
     );
   }
@@ -1219,7 +1265,7 @@ class _SongRow extends StatelessWidget {
       ),
       title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(
-        '${song.artist.isEmpty ? AppLocalizations.of(context)!.unknownArtist : song.artist} · ${song.albumId}',
+        '${song.artist.isEmpty ? AppLocalizations.of(context).unknownArtist : song.artist} · ${song.albumId}',
       ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1233,7 +1279,7 @@ class _SongRow extends StatelessWidget {
           IconButton(
             onPressed: onPlay,
             icon: const Icon(Icons.play_circle_fill_rounded),
-            tooltip: AppLocalizations.of(context)!.playTooltip,
+            tooltip: AppLocalizations.of(context).playTooltip,
           ),
           PopupMenuButton<String>(
             enabled: canControl,
@@ -1245,7 +1291,7 @@ class _SongRow extends StatelessWidget {
               if (v == 'remove') onDelete?.call();
             },
             itemBuilder: (_) {
-              final l10n = AppLocalizations.of(context)!;
+              final l10n = AppLocalizations.of(context);
               return [
                 PopupMenuItem(value: 'next', child: Text(l10n.playNext)),
                 PopupMenuItem(value: 'tail', child: Text(l10n.addToQueueTail)),

@@ -14,6 +14,7 @@ namespace OmniMixPlayer.Backend.Audio
     /// </summary>
     public sealed class InstanceProfileStore : IDisposable
     {
+        private const int InstanceDbVersion = 2;
         private readonly LiteDatabase _db;
         private readonly ILogger _logger;
 
@@ -29,9 +30,7 @@ namespace OmniMixPlayer.Backend.Audio
             public float Volume { get; set; } = 1.0f;
             public float TargetLatency { get; set; } = 0.1f;
             public string EqualizerJson { get; set; }
-            public string ActiveQueueId { get; set; }
-            public string QueuesJson { get; set; }
-            public string PlaybackQueueJson { get; set; }
+            public string PlaybackTimelineJson { get; set; }
             public List<string> ImportedPlaylistIds { get; set; } = new();
             public List<string> PinnedTagIds { get; set; } = new();
             public long CreatedAt { get; set; }
@@ -68,7 +67,7 @@ namespace OmniMixPlayer.Backend.Audio
                 var doc = meta.FindById(StorageVersion.LiteDbDocumentId);
                 if (doc != null &&
                     doc.ContainsKey("version") &&
-                    doc["version"].AsInt32 == StorageVersion.Current)
+                    doc["version"].AsInt32 == InstanceDbVersion)
                 {
                     return;
                 }
@@ -88,7 +87,7 @@ namespace OmniMixPlayer.Backend.Audio
             meta.Upsert(new BsonDocument
             {
                 ["_id"] = StorageVersion.LiteDbDocumentId,
-                ["version"] = StorageVersion.Current
+                ["version"] = InstanceDbVersion
             });
         }
 
@@ -232,13 +231,11 @@ namespace OmniMixPlayer.Backend.Audio
             ModId = p.ModId,
             GameName = p.GameName,
             Mode = 0,
-            CapabilitiesJson = Google.Protobuf.JsonFormatter.Default.Format(p.Capabilities),
+            CapabilitiesJson = Google.Protobuf.JsonFormatter.Default.Format(p.Capabilities ?? new InstanceCapabilities()),
             Volume = p.Volume,
             TargetLatency = p.TargetLatency,
-            EqualizerJson = Google.Protobuf.JsonFormatter.Default.Format(p.Equalizer),
-            ActiveQueueId = p.ActiveQueueId,
-            QueuesJson = SerializeQueues(p.Queues),
-            PlaybackQueueJson = Google.Protobuf.JsonFormatter.Default.Format(p.PlaybackQueue ?? new PlaybackQueueState()),
+            EqualizerJson = Google.Protobuf.JsonFormatter.Default.Format(p.Equalizer ?? new SDK.Protos.Models.EqualizerState()),
+            PlaybackTimelineJson = Google.Protobuf.JsonFormatter.Default.Format(p.PlaybackTimeline ?? CreateDefaultTimeline()),
             ImportedPlaylistIds = p.ImportedPlaylistIds?.ToList() ?? new(),
             PinnedTagIds = p.PinnedTagIds?.ToList() ?? new(),
             CreatedAt = p.CreatedAt?.Seconds ?? 0,
@@ -256,7 +253,6 @@ namespace OmniMixPlayer.Backend.Audio
                 GameName = doc.GameName ?? "",
                 Volume = doc.Volume,
                 TargetLatency = doc.TargetLatency,
-                ActiveQueueId = doc.ActiveQueueId ?? "default",
                 CreatedAt = new OmniTimestamp { Seconds = doc.CreatedAt },
                 UpdatedAt = new OmniTimestamp { Seconds = doc.UpdatedAt }
             };
@@ -286,40 +282,21 @@ namespace OmniMixPlayer.Backend.Audio
                 catch { profile.Equalizer = new SDK.Protos.Models.EqualizerState(); }
             }
 
-            // Deserialize queues
-            if (!string.IsNullOrEmpty(doc.QueuesJson) && doc.QueuesJson != "[]")
+            if (!string.IsNullOrEmpty(doc.PlaybackTimelineJson))
             {
                 try
                 {
-                    var queueList = System.Text.Json.JsonSerializer.Deserialize<List<QueueInfo>>(doc.QueuesJson);
-                    if (queueList != null)
-                        profile.Queues.AddRange(queueList);
+                    var timeline = Google.Protobuf.JsonParser.Default.Parse<PlaybackTimelineState>(doc.PlaybackTimelineJson);
+                    profile.PlaybackTimeline = timeline.Version == 2 ? timeline : CreateDefaultTimeline();
                 }
-                catch { }
-            }
-
-            if (!string.IsNullOrEmpty(doc.PlaybackQueueJson))
-            {
-                try
-                {
-                    profile.PlaybackQueue = Google.Protobuf.JsonParser.Default.Parse<PlaybackQueueState>(doc.PlaybackQueueJson);
-                }
-                catch { profile.PlaybackQueue = new PlaybackQueueState { ActiveQueueId = profile.ActiveQueueId }; }
+                catch { profile.PlaybackTimeline = CreateDefaultTimeline(); }
             }
             else
             {
-                profile.PlaybackQueue = new PlaybackQueueState { ActiveQueueId = profile.ActiveQueueId };
+                profile.PlaybackTimeline = CreateDefaultTimeline();
             }
 
             return profile;
-        }
-
-        private static string SerializeQueues(IEnumerable<QueueInfo> queues)
-        {
-            if (queues == null) return "[]";
-            var list = queues.ToList();
-            if (list.Count == 0) return "[]";
-            return System.Text.Json.JsonSerializer.Serialize(list);
         }
 
         private static InstanceProfile CreateDefault(string id) => new InstanceProfile
@@ -329,11 +306,17 @@ namespace OmniMixPlayer.Backend.Audio
             Kind = InstanceKind.GameMod,
             Volume = 1.0f,
             TargetLatency = 0.1f,
-            ActiveQueueId = "default",
             Capabilities = new InstanceCapabilities(),
             Equalizer = new SDK.Protos.Models.EqualizerState { SoftClipEnabled = true },
-            PlaybackQueue = new PlaybackQueueState { ActiveQueueId = "default" },
+            PlaybackTimeline = CreateDefaultTimeline(),
             CreatedAt = new OmniTimestamp { Seconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds() },
+        };
+
+        private static PlaybackTimelineState CreateDefaultTimeline() => new()
+        {
+            Version = 2,
+            SourceCursor = -1,
+            CurrentSourceIndex = -1
         };
 
         public void Dispose()

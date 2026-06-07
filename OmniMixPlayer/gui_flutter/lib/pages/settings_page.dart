@@ -187,6 +187,18 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 if (!kIsWeb) ...[
                   const SizedBox(height: 12),
+                  _AudioOutputDeviceRow(
+                    state: st,
+                    onChanged: (deviceId) async {
+                      await st.setAudioOutputDevice(deviceId);
+                      if (mounted) setState(() {});
+                    },
+                    onRefresh: () async {
+                      await st.refreshAudioOutputDevices();
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 12),
                   _SwitchRow(
                     label: l10n.floatingPlayer,
                     value: st.floatingPlayerVisible,
@@ -256,7 +268,7 @@ class _SettingsPageState extends State<SettingsPage> {
                               l10n.shortcutSettingsDesc,
                               style: TextStyle(
                                 fontSize: 12,
-                                color: cs.onSurfaceVariant.withOpacity(0.8),
+                                color: cs.onSurfaceVariant.withValues(alpha: 0.8),
                               ),
                             ),
                           ],
@@ -509,13 +521,14 @@ class _BackendToggleButton extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final running = state.backendRunning;
     final busy = state.backendBusy;
-    if (busy)
+    if (busy) {
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(8),
           child: CircularProgressIndicator(strokeWidth: 2),
         ),
       );
+    }
     return SizedBox(
       width: double.infinity,
       child: running
@@ -624,6 +637,93 @@ class _InputRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _AudioOutputDeviceRow extends StatelessWidget {
+  final AppState state;
+  final ValueChanged<String?> onChanged;
+  final VoidCallback onRefresh;
+
+  const _AudioOutputDeviceRow({
+    required this.state,
+    required this.onChanged,
+    required this.onRefresh,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final devices = state.audioOutputDevices;
+    final selected = state.audioOutputDeviceId;
+    final selectedValue = devices.any((d) => d.id == selected) ? selected : '';
+
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Audio output device',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                _audioStateText(state.nativeAudioState),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.8),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 16),
+        IconButton(
+          onPressed: onRefresh,
+          icon: const Icon(Icons.refresh, size: 18),
+          tooltip: 'Refresh devices',
+        ),
+        const SizedBox(width: 8),
+        DropdownButton<String>(
+          value: selectedValue,
+          underline: const SizedBox(),
+          items: [
+            const DropdownMenuItem(
+              value: '',
+              child: Text('System default', style: TextStyle(fontSize: 13)),
+            ),
+            ...devices.map(
+              (device) => DropdownMenuItem(
+                value: device.id,
+                child: Text(
+                  device.isDefault ? '${device.name} (Default)' : device.name,
+                  style: const TextStyle(fontSize: 13),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ],
+          onChanged: (value) =>
+              onChanged(value == null || value.isEmpty ? null : value),
+        ),
+      ],
+    );
+  }
+
+  static String _audioStateText(dynamic state) {
+    if (state.lastError is String && (state.lastError as String).isNotEmpty) {
+      return state.lastError as String;
+    }
+    if (state.running != true) return 'Native PCM playback is idle';
+    final input = state.inputSampleRate > 0
+        ? '${state.inputSampleRate} Hz / ${state.inputChannels} ch'
+        : 'waiting for PCM format';
+    final output = state.outputSampleRate > 0
+        ? '${state.outputSampleRate} Hz / ${state.outputChannels} ch'
+        : 'output pending';
+    return '$input -> $output';
   }
 }
 
@@ -876,10 +976,11 @@ class _ServiceStatusCardState extends State<_ServiceStatusCard> {
   }
 
   String _resultText(String result, String svcState, dynamic l10n) {
-    if (result == 'failed')
+    if (result == 'failed') {
       return svcState == 'running' || svcState == 'installed'
           ? l10n.serviceUninstallFailed
           : l10n.serviceInstallFailed;
+    }
     if (result == 'installed') return l10n.serviceInstallSuccess;
     if (result == 'not_installed') return l10n.serviceUninstallSuccess;
     return result;
@@ -887,7 +988,7 @@ class _ServiceStatusCardState extends State<_ServiceStatusCard> {
 
   Future<void> _doInstall() async {
     await widget.state.installService();
-    if (mounted)
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -898,6 +999,7 @@ class _ServiceStatusCardState extends State<_ServiceStatusCard> {
           duration: const Duration(seconds: 2),
         ),
       );
+    }
   }
 
   Future<void> _doUninstall() async {
@@ -920,7 +1022,7 @@ class _ServiceStatusCardState extends State<_ServiceStatusCard> {
     );
     if (confirmed != true) return;
     await widget.state.uninstallService();
-    if (mounted)
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -931,6 +1033,7 @@ class _ServiceStatusCardState extends State<_ServiceStatusCard> {
           duration: const Duration(seconds: 2),
         ),
       );
+    }
   }
 }
 
@@ -1072,7 +1175,7 @@ class _InstanceManagementCardState extends State<_InstanceManagementCard> {
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
-              inst.mode.name,
+              inst.kind.name,
               style: TextStyle(
                 fontSize: 11,
                 color: widget.state.canControlInstance(inst.id)

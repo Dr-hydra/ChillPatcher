@@ -41,12 +41,16 @@ String _readArray(Array<Uint8> arr, int maxLen) {
   }
 }
 
-Pointer<Utf8> _str(String? s) => s == null ? nullptr : s.toNativeUtf8(allocator: calloc);
+Pointer<Utf8> _str(String? s) =>
+    s == null ? nullptr : s.toNativeUtf8(allocator: calloc);
 void _freeStr(Pointer<Utf8> p) {
   if (p.address != 0) calloc.free(p);
 }
+
 void _freeList(List<Pointer<Utf8>> ptrs) {
-  for (final p in ptrs) { calloc.free(p); }
+  for (final p in ptrs) {
+    calloc.free(p);
+  }
 }
 
 bool _ok(int r) => r == 0;
@@ -68,8 +72,9 @@ void _writeFixedString(Array<Uint8> dst, int maxLen, String value) {
 
 int _capFlags(InstanceCapabilities caps) {
   var flags = 0;
-  if (caps.serverControlledPlayback) flags |= omniPcmCapServerControlledPlayback;
-  if (caps.clientManagedPlayback) flags |= omniPcmCapClientManagedPlayback;
+  if (caps.serverControlledPlayback) {
+    flags |= omniPcmCapServerControlledPlayback;
+  }
   if (caps.queueManagement) flags |= omniPcmCapQueueManagement;
   if (caps.playlistManagement) flags |= omniPcmCapPlaylistManagement;
   if (caps.shuffle) flags |= omniPcmCapShuffle;
@@ -141,10 +146,11 @@ InstanceSummary _cSummaryToProto(Pointer<OmniPcmInstanceSummaryInfo> p) {
     ..modId = _readArray(s.modId, 128)
     ..gameName = _readArray(s.gameName, 256)
     ..currentTrackUuid = _readArray(s.currentTrackUuid, OMNI_PCM_UUID_BYTES)
-    ..kind = InstanceKind.valueOf(s.kind) ??
-        InstanceKind.INSTANCE_KIND_UNSPECIFIED
+    ..kind =
+        InstanceKind.valueOf(s.kind) ?? InstanceKind.INSTANCE_KIND_UNSPECIFIED
     ..isOnline = s.isOnline != 0
-    ..queueCount = s.queueCount;
+    ..queueCount = s.queueCount
+    ..connectedAt = _omniTimestamp(s.connectedAt);
 }
 
 InstanceProfile _cProfileToProto(Pointer<OmniPcmInstanceProfileInfo> p) {
@@ -152,7 +158,6 @@ InstanceProfile _cProfileToProto(Pointer<OmniPcmInstanceProfileInfo> p) {
   final caps = InstanceCapabilities();
   final f = prof.capabilityFlags;
   caps.serverControlledPlayback = (f & 1) != 0;
-  caps.clientManagedPlayback = (f & 2) != 0;
   caps.queueManagement = (f & 4) != 0;
   caps.playlistManagement = (f & 8) != 0;
   caps.shuffle = (f & 16) != 0;
@@ -165,18 +170,24 @@ InstanceProfile _cProfileToProto(Pointer<OmniPcmInstanceProfileInfo> p) {
   caps.unlimitedTags = (f & 2048) != 0;
   caps.albumFiltering = (f & 4096) != 0;
   caps.audioPlayback = (f & omniPcmCapAudioPlayback) != 0;
+  caps.customSystemMediaService = (f & omniPcmCapCustomSystemMediaService) != 0;
+  caps.maxImportedPlaylists = prof.maxImportedPlaylists;
+  caps.maxTags = prof.maxTags;
+  caps.maxPlaylistEntries = prof.maxPlaylistEntries;
 
   return InstanceProfile()
     ..id = _readArray(prof.instanceId, 128)
     ..displayName = _readArray(prof.displayName, 256)
     ..modId = _readArray(prof.modId, 128)
     ..gameName = _readArray(prof.gameName, 256)
-    ..activeQueueId = _readArray(prof.activeQueueId, 128)
-    ..kind = InstanceKind.valueOf(prof.kind) ??
+    ..kind =
+        InstanceKind.valueOf(prof.kind) ??
         InstanceKind.INSTANCE_KIND_UNSPECIFIED
     ..capabilities = caps
     ..volume = prof.volume
-    ..targetLatency = prof.targetLatency;
+    ..targetLatency = prof.targetLatency
+    ..createdAt = _omniTimestamp(prof.createdAt)
+    ..updatedAt = _omniTimestamp(prof.updatedAt);
 }
 
 PlaybackStatus _cStatusToProto(Pointer<OmniPcmPlaybackStatusInfo> p) {
@@ -190,7 +201,8 @@ PlaybackStatus _cStatusToProto(Pointer<OmniPcmPlaybackStatusInfo> p) {
     ..position = s.position
     ..isPlaying = s.isPlaying != 0
     ..shuffle = s.shuffle != 0
-    ..repeatMode = RepeatMode.valueOf(s.repeatMode) ?? RepeatMode.REPEAT_MODE_NONE
+    ..repeatMode =
+        RepeatMode.valueOf(s.repeatMode) ?? RepeatMode.REPEAT_MODE_NONE
     ..volume = s.volume;
 }
 
@@ -207,14 +219,17 @@ QueueTrack _cQueueToProto(Pointer<OmniPcmQueueTrackInfo> p) {
     ..duration = q.duration;
 }
 
-PlaylistSourceInfo _cPlaylistSourceToProto(Pointer<OmniPcmPlaylistSourceInfo> p) {
+PlaylistSourceInfo _cPlaylistSourceToProto(
+  Pointer<OmniPcmPlaylistSourceInfo> p,
+) {
   final s = p.ref;
   return PlaylistSourceInfo()
     ..id = _readArray(s.id, 128)
     ..name = _readArray(s.name, 256)
     ..refId = _readArray(s.refId, 256)
     ..songCount = s.songCount
-    ..kind = PlaylistSourceKind.valueOf(s.kind) ??
+    ..kind =
+        PlaylistSourceKind.valueOf(s.kind) ??
         PlaylistSourceKind.PLAYLIST_SOURCE_KIND_UNSPECIFIED;
 }
 
@@ -225,14 +240,15 @@ EqualizerPoint _cEqPointToProto(Pointer<OmniPcmEqualizerPointInfo> p) {
     ..frequency = e.frequency
     ..gainDb = e.gainDb
     ..q = e.q
-    ..type = EqualizerFilterType.valueOf(e.type) ??
+    ..type =
+        EqualizerFilterType.valueOf(e.type) ??
         EqualizerFilterType.EQ_FILTER_TYPE_PEAKING;
 }
 
 // All capability flags for Flutter GUI
 
-const _fullGuiCaps = omniPcmCapServerControlledPlayback |
-    omniPcmCapClientManagedPlayback |
+const _fullGuiCaps =
+    omniPcmCapServerControlledPlayback |
     omniPcmCapQueueManagement |
     omniPcmCapPlaylistManagement |
     omniPcmCapShuffle |
@@ -244,7 +260,8 @@ const _fullGuiCaps = omniPcmCapServerControlledPlayback |
     omniPcmCapTagFiltering |
     omniPcmCapUnlimitedTags |
     omniPcmCapAlbumFiltering |
-    omniPcmCapAudioPlayback;
+    omniPcmCapAudioPlayback |
+    omniPcmCapCustomSystemMediaService;
 
 // SDK Client
 
@@ -253,10 +270,10 @@ class _RawOmniSdkClient {
   final String _clientId;
   String _instanceId = '';
 
-  _RawOmniSdkClient({String clientId = 'flutter'}) : _clientId = clientId {
+  _RawOmniSdkClient({this._clientId = 'flutter'}) {
     final config = calloc<OmniPcmClientConfig>();
-    config.ref.host = nullptr;   // default: 127.0.0.1
-    config.ref.port = 0;         // discover
+    config.ref.host = nullptr; // default: 127.0.0.1
+    config.ref.port = 0; // discover
     config.ref.timeoutMs = 6000;
     _handle = omniClientCreate(config);
     calloc.free(config);
@@ -318,11 +335,14 @@ class _RawOmniSdkClient {
       for (int i = 0; i < total; i++) {
         final id = _readArray(buf[i].instanceId, 128);
         if (id == _clientId) {
-          _instanceId = id;
-          final prof = await getProfile(id);
-          calloc.free(buf);
-          calloc.free(cnt2);
-          return prof;
+          if (buf[i].isOnline != 0) {
+            _instanceId = id;
+            final prof = await getProfile(id);
+            calloc.free(buf);
+            calloc.free(cnt2);
+            return prof;
+          }
+          break;
         }
       }
       calloc.free(buf);
@@ -369,6 +389,22 @@ class _RawOmniSdkClient {
     _freeStr(iid);
     final result = _cProfileToProto(p);
     calloc.free(p);
+
+    try {
+      final sources = await getPlaylistSources(instanceId);
+      result.playbackTimeline = PlaybackTimelineState()
+        ..version = 2
+        ..playlistSources.addAll(
+          sources.map(
+            (s) => PlaylistSourceState()
+              ..id = s.id
+              ..name = s.name
+              ..kind = s.kind
+              ..refId = s.refId,
+          ),
+        );
+    } catch (_) {}
+
     return result;
   }
 
@@ -387,14 +423,19 @@ class _RawOmniSdkClient {
     if (profile.gameName.isNotEmpty) {
       _writeFixedString(p.ref.gameName, 256, profile.gameName);
     }
-    if (profile.activeQueueId.isNotEmpty) {
-      _writeFixedString(p.ref.activeQueueId, 128, profile.activeQueueId);
-    }
     if (profile.kind != InstanceKind.INSTANCE_KIND_UNSPECIFIED) {
       p.ref.kind = profile.kind.value;
     }
     if (profile.hasCapabilities()) {
       p.ref.capabilityFlags = _capFlags(profile.capabilities);
+      final caps = profile.capabilities;
+      if (caps.hasMaxImportedPlaylists()) {
+        p.ref.maxImportedPlaylists = caps.maxImportedPlaylists;
+      }
+      if (caps.hasMaxTags()) p.ref.maxTags = caps.maxTags;
+      if (caps.hasMaxPlaylistEntries()) {
+        p.ref.maxPlaylistEntries = caps.maxPlaylistEntries;
+      }
     }
     if (profile.volume != 0) {
       p.ref.volume = profile.volume;
@@ -483,7 +524,10 @@ class _RawOmniSdkClient {
     _freeStr(lbl);
   }
 
-  Future<InstanceProfile> inheritFromArchive(String newInstanceId, String archiveId) async {
+  Future<InstanceProfile> inheritFromArchive(
+    String newInstanceId,
+    String archiveId,
+  ) async {
     final nid = _str(newInstanceId);
     final aid = _str(archiveId);
     final out = calloc<OmniPcmInstanceProfileInfo>();
@@ -613,7 +657,10 @@ class _RawOmniSdkClient {
     omniClientGetQueue(_h, iid, nullptr, count);
     final total = count.value;
     calloc.free(count);
-    if (total == 0) { _freeStr(iid); return []; }
+    if (total == 0) {
+      _freeStr(iid);
+      return [];
+    }
 
     final buf = calloc<OmniPcmQueueTrackInfo>(total);
     final cnt2 = calloc<Int32>(1)..value = total;
@@ -636,11 +683,17 @@ class _RawOmniSdkClient {
     _freeStr(u);
   }
 
-  Future<void> insertIntoQueue(String instanceId, List<String> uuids, int index) async {
+  Future<void> insertIntoQueue(
+    String instanceId,
+    List<String> uuids,
+    int index,
+  ) async {
     final iid = _str(instanceId);
     final ptrs = uuids.map((u) => _str(u)).toList();
     final arr = calloc<Pointer<Utf8>>(ptrs.length);
-    for (int i = 0; i < ptrs.length; i++) { arr[i] = ptrs[i]; }
+    for (int i = 0; i < ptrs.length; i++) {
+      arr[i] = ptrs[i];
+    }
     _check(omniClientInsertIntoQueue(_h, iid, arr, ptrs.length, index));
     calloc.free(arr);
     _freeList(ptrs);
@@ -651,7 +704,9 @@ class _RawOmniSdkClient {
     final iid = _str(instanceId);
     final ptrs = uuids.map((u) => _str(u)).toList();
     final arr = calloc<Pointer<Utf8>>(ptrs.length);
-    for (int i = 0; i < ptrs.length; i++) { arr[i] = ptrs[i]; }
+    for (int i = 0; i < ptrs.length; i++) {
+      arr[i] = ptrs[i];
+    }
     _check(omniClientSetQueue(_h, iid, arr, ptrs.length));
     calloc.free(arr);
     _freeList(ptrs);
@@ -684,7 +739,10 @@ class _RawOmniSdkClient {
     omniClientGetHistory(_h, iid, nullptr, count);
     final total = count.value;
     calloc.free(count);
-    if (total == 0) { _freeStr(iid); return []; }
+    if (total == 0) {
+      _freeStr(iid);
+      return [];
+    }
 
     final buf = calloc<OmniPcmQueueTrackInfo>(total);
     final cnt2 = calloc<Int32>(1)..value = total;
@@ -856,7 +914,10 @@ class _RawOmniSdkClient {
     omniClientQueryTracks(_h, q, nullptr, count);
     final total = count.value;
     calloc.free(count);
-    if (total == 0) { _freeQuery(q); return []; }
+    if (total == 0) {
+      _freeQuery(q);
+      return [];
+    }
 
     final buf = calloc<OmniPcmTrackInfo>(total);
     final cnt2 = calloc<Int32>(1)..value = total;
@@ -871,7 +932,11 @@ class _RawOmniSdkClient {
     return result;
   }
 
-  Future<List<Album>> queryAlbums({String moduleId = '', int limit = 0, int offset = 0}) async {
+  Future<List<Album>> queryAlbums({
+    String moduleId = '',
+    int limit = 0,
+    int offset = 0,
+  }) async {
     final q = calloc<OmniPcmLibraryQuery>();
     q.ref.moduleId = _str(moduleId.isEmpty ? null : moduleId);
     q.ref.limit = limit;
@@ -881,7 +946,10 @@ class _RawOmniSdkClient {
     omniClientQueryAlbums(_h, q, nullptr, count);
     final total = count.value;
     calloc.free(count);
-    if (total == 0) { _freeLibQuery(q); return []; }
+    if (total == 0) {
+      _freeLibQuery(q);
+      return [];
+    }
 
     final buf = calloc<OmniPcmAlbumInfo>(total);
     final cnt2 = calloc<Int32>(1)..value = total;
@@ -896,7 +964,11 @@ class _RawOmniSdkClient {
     return result;
   }
 
-  Future<List<Tag>> queryTags({String moduleId = '', int limit = 0, int offset = 0}) async {
+  Future<List<Tag>> queryTags({
+    String moduleId = '',
+    int limit = 0,
+    int offset = 0,
+  }) async {
     final q = calloc<OmniPcmLibraryQuery>();
     q.ref.moduleId = _str(moduleId.isEmpty ? null : moduleId);
     q.ref.limit = limit;
@@ -906,7 +978,10 @@ class _RawOmniSdkClient {
     omniClientQueryTags(_h, q, nullptr, count);
     final total = count.value;
     calloc.free(count);
-    if (total == 0) { _freeLibQuery(q); return []; }
+    if (total == 0) {
+      _freeLibQuery(q);
+      return [];
+    }
 
     final buf = calloc<OmniPcmTagInfo>(total);
     final cnt2 = calloc<Int32>(1)..value = total;
@@ -921,7 +996,11 @@ class _RawOmniSdkClient {
     return result;
   }
 
-  Future<List<Playlist>> queryPlaylists({String moduleId = '', int limit = 0, int offset = 0}) async {
+  Future<List<Playlist>> queryPlaylists({
+    String moduleId = '',
+    int limit = 0,
+    int offset = 0,
+  }) async {
     final q = calloc<OmniPcmLibraryQuery>();
     q.ref.moduleId = _str(moduleId.isEmpty ? null : moduleId);
     q.ref.limit = limit;
@@ -931,7 +1010,10 @@ class _RawOmniSdkClient {
     omniClientQueryPlaylists(_h, q, nullptr, count);
     final total = count.value;
     calloc.free(count);
-    if (total == 0) { _freeLibQuery(q); return []; }
+    if (total == 0) {
+      _freeLibQuery(q);
+      return [];
+    }
 
     final buf = calloc<OmniPcmPlaylistInfo>(total);
     final cnt2 = calloc<Int32>(1)..value = total;
@@ -1003,7 +1085,7 @@ class OmniSdkClient {
   Object? _initError;
   StackTrace? _initStackTrace;
 
-  OmniSdkClient({String clientId = 'flutter'}) : _clientId = clientId {
+  OmniSdkClient({this._clientId = 'flutter'}) {
     _initFuture = _init();
     _initFuture.ignore();
   }
@@ -1014,17 +1096,20 @@ class OmniSdkClient {
       _responsePort.listen(_handleResponse);
 
       final handshakePort = ReceivePort();
-      _workerIsolate = await Isolate.spawn(
-        _sdkWorkerEntryPoint,
-        [handshakePort.sendPort, _responsePort.sendPort, _clientId],
-      );
+      _workerIsolate = await Isolate.spawn(_sdkWorkerEntryPoint, [
+        handshakePort.sendPort,
+        _responsePort.sendPort,
+        _clientId,
+      ]);
 
       final handshakeResult = await handshakePort.first;
       handshakePort.close();
       if (handshakeResult is SendPort) {
         _workerSendPort = handshakeResult;
       } else {
-        throw OmniSdkException('Failed to initialize SDK worker: $handshakeResult');
+        throw OmniSdkException(
+          'Failed to initialize SDK worker: $handshakeResult',
+        );
       }
     } catch (e, st) {
       _initError = e;
@@ -1100,7 +1185,11 @@ class OmniSdkClient {
     String gameName = 'Flutter GUI',
     String displayName = 'OmniMix GUI',
   }) async {
-    final bytes = await _call<Uint8List>('ensureConnected', [modId, gameName, displayName]);
+    final bytes = await _call<Uint8List>('ensureConnected', [
+      modId,
+      gameName,
+      displayName,
+    ]);
     return InstanceProfile.fromBuffer(bytes);
   }
 
@@ -1109,7 +1198,11 @@ class OmniSdkClient {
     String gameName = 'Flutter GUI',
     String displayName = 'OmniMix GUI',
   }) async {
-    final bytes = await _call<Uint8List>('connect', [modId, gameName, displayName]);
+    final bytes = await _call<Uint8List>('connect', [
+      modId,
+      gameName,
+      displayName,
+    ]);
     return InstanceProfile.fromBuffer(bytes);
   }
 
@@ -1128,12 +1221,16 @@ class OmniSdkClient {
 
   Future<List<InstanceSummary>> listInstances() async {
     final list = await _call<List<dynamic>>('listInstances', []);
-    return list.map((bytes) => InstanceSummary.fromBuffer(bytes as Uint8List)).toList();
+    return list
+        .map((bytes) => InstanceSummary.fromBuffer(bytes as Uint8List))
+        .toList();
   }
 
   Future<List<InstanceProfile>> listArchives() async {
     final list = await _call<List<dynamic>>('listArchives', []);
-    return list.map((bytes) => InstanceProfile.fromBuffer(bytes as Uint8List)).toList();
+    return list
+        .map((bytes) => InstanceProfile.fromBuffer(bytes as Uint8List))
+        .toList();
   }
 
   Future<InstanceProfile> getArchive(String archiveId) async {
@@ -1150,8 +1247,14 @@ class OmniSdkClient {
   Future<void> archiveInstance(String instanceId, String label) =>
       _call<void>('archiveInstance', [instanceId, label]);
 
-  Future<InstanceProfile> inheritFromArchive(String newInstanceId, String archiveId) async {
-    final bytes = await _call<Uint8List>('inheritFromArchive', [newInstanceId, archiveId]);
+  Future<InstanceProfile> inheritFromArchive(
+    String newInstanceId,
+    String archiveId,
+  ) async {
+    final bytes = await _call<Uint8List>('inheritFromArchive', [
+      newInstanceId,
+      archiveId,
+    ]);
     return InstanceProfile.fromBuffer(bytes);
   }
 
@@ -1165,23 +1268,17 @@ class OmniSdkClient {
   Future<void> play(String instanceId, {String uuid = ''}) =>
       _call<void>('play', [instanceId, uuid]);
 
-  Future<void> pause(String instanceId) =>
-      _call<void>('pause', [instanceId]);
+  Future<void> pause(String instanceId) => _call<void>('pause', [instanceId]);
 
-  Future<void> resume(String instanceId) =>
-      _call<void>('resume', [instanceId]);
+  Future<void> resume(String instanceId) => _call<void>('resume', [instanceId]);
 
-  Future<void> toggle(String instanceId) =>
-      _call<void>('toggle', [instanceId]);
+  Future<void> toggle(String instanceId) => _call<void>('toggle', [instanceId]);
 
-  Future<void> next(String instanceId) =>
-      _call<void>('next', [instanceId]);
+  Future<void> next(String instanceId) => _call<void>('next', [instanceId]);
 
-  Future<void> prev(String instanceId) =>
-      _call<void>('prev', [instanceId]);
+  Future<void> prev(String instanceId) => _call<void>('prev', [instanceId]);
 
-  Future<void> stop(String instanceId) =>
-      _call<void>('stop', [instanceId]);
+  Future<void> stop(String instanceId) => _call<void>('stop', [instanceId]);
 
   Future<void> seek(String instanceId, double position) =>
       _call<void>('seek', [instanceId, position]);
@@ -1208,14 +1305,19 @@ class OmniSdkClient {
 
   Future<List<QueueTrack>> getQueue(String instanceId) async {
     final list = await _call<List<dynamic>>('getQueue', [instanceId]);
-    return list.map((bytes) => QueueTrack.fromBuffer(bytes as Uint8List)).toList();
+    return list
+        .map((bytes) => QueueTrack.fromBuffer(bytes as Uint8List))
+        .toList();
   }
 
   Future<void> addToQueue(String instanceId, String uuid) =>
       _call<void>('addToQueue', [instanceId, uuid]);
 
-  Future<void> insertIntoQueue(String instanceId, List<String> uuids, int index) =>
-      _call<void>('insertIntoQueue', [instanceId, uuids, index]);
+  Future<void> insertIntoQueue(
+    String instanceId,
+    List<String> uuids,
+    int index,
+  ) => _call<void>('insertIntoQueue', [instanceId, uuids, index]);
 
   Future<void> setQueue(String instanceId, List<String> uuids) =>
       _call<void>('setQueue', [instanceId, uuids]);
@@ -1233,7 +1335,9 @@ class OmniSdkClient {
 
   Future<List<QueueTrack>> getHistory(String instanceId) async {
     final list = await _call<List<dynamic>>('getHistory', [instanceId]);
-    return list.map((bytes) => QueueTrack.fromBuffer(bytes as Uint8List)).toList();
+    return list
+        .map((bytes) => QueueTrack.fromBuffer(bytes as Uint8List))
+        .toList();
   }
 
   Future<void> removeFromHistory(String instanceId, int index) =>
@@ -1247,11 +1351,18 @@ class OmniSdkClient {
 
   Future<List<PlaylistSourceInfo>> getPlaylistSources(String instanceId) async {
     final list = await _call<List<dynamic>>('getPlaylistSources', [instanceId]);
-    return list.map((bytes) => PlaylistSourceInfo.fromBuffer(bytes as Uint8List)).toList();
+    return list
+        .map((bytes) => PlaylistSourceInfo.fromBuffer(bytes as Uint8List))
+        .toList();
   }
 
-  Future<void> setPlaylistSources(String instanceId, List<PlaylistSourceSpec> sources) =>
-      _call<void>('setPlaylistSources', [instanceId, sources.map((s) => s.writeToBuffer()).toList()]);
+  Future<void> setPlaylistSources(
+    String instanceId,
+    List<PlaylistSourceSpec> sources,
+  ) => _call<void>('setPlaylistSources', [
+    instanceId,
+    sources.map((s) => s.writeToBuffer()).toList(),
+  ]);
 
   Future<EqualizerState> getEqualizer(String instanceId) async {
     final bytes = await _call<Uint8List>('getEqualizer', [instanceId]);
@@ -1289,7 +1400,11 @@ class OmniSdkClient {
     int limit = 0,
     int offset = 0,
   }) async {
-    final list = await _call<List<dynamic>>('queryAlbums', [moduleId, limit, offset]);
+    final list = await _call<List<dynamic>>('queryAlbums', [
+      moduleId,
+      limit,
+      offset,
+    ]);
     return list.map((bytes) => Album.fromBuffer(bytes as Uint8List)).toList();
   }
 
@@ -1298,7 +1413,11 @@ class OmniSdkClient {
     int limit = 0,
     int offset = 0,
   }) async {
-    final list = await _call<List<dynamic>>('queryTags', [moduleId, limit, offset]);
+    final list = await _call<List<dynamic>>('queryTags', [
+      moduleId,
+      limit,
+      offset,
+    ]);
     return list.map((bytes) => Tag.fromBuffer(bytes as Uint8List)).toList();
   }
 
@@ -1307,8 +1426,14 @@ class OmniSdkClient {
     int limit = 0,
     int offset = 0,
   }) async {
-    final list = await _call<List<dynamic>>('queryPlaylists', [moduleId, limit, offset]);
-    return list.map((bytes) => Playlist.fromBuffer(bytes as Uint8List)).toList();
+    final list = await _call<List<dynamic>>('queryPlaylists', [
+      moduleId,
+      limit,
+      offset,
+    ]);
+    return list
+        .map((bytes) => Playlist.fromBuffer(bytes as Uint8List))
+        .toList();
   }
 
   Future<Track?> getTrack(String uuid) async {
@@ -1368,7 +1493,11 @@ void _sdkWorkerEntryPoint(List<dynamic> initArgs) {
   });
 }
 
-Future<dynamic> _executeMethod(_RawOmniSdkClient client, String method, List<dynamic> args) async {
+Future<dynamic> _executeMethod(
+  _RawOmniSdkClient client,
+  String method,
+  List<dynamic> args,
+) async {
   switch (method) {
     case 'ensureConnected':
       final result = await client.ensureConnected(
@@ -1410,7 +1539,10 @@ Future<dynamic> _executeMethod(_RawOmniSdkClient client, String method, List<dyn
     case 'archiveInstance':
       return await client.archiveInstance(args[0] as String, args[1] as String);
     case 'inheritFromArchive':
-      final result = await client.inheritFromArchive(args[0] as String, args[1] as String);
+      final result = await client.inheritFromArchive(
+        args[0] as String,
+        args[1] as String,
+      );
       return result.writeToBuffer();
     case 'getStatus':
       final result = await client.getStatus(args[0] as String);
@@ -1436,7 +1568,10 @@ Future<dynamic> _executeMethod(_RawOmniSdkClient client, String method, List<dyn
     case 'getVolume':
       return await client.getVolume(args[0] as String);
     case 'setTargetLatency':
-      return await client.setTargetLatency(args[0] as String, args[1] as double);
+      return await client.setTargetLatency(
+        args[0] as String,
+        args[1] as double,
+      );
     case 'getTargetLatency':
       return await client.getTargetLatency(args[0] as String);
     case 'setShuffle':
@@ -1449,13 +1584,24 @@ Future<dynamic> _executeMethod(_RawOmniSdkClient client, String method, List<dyn
     case 'addToQueue':
       return await client.addToQueue(args[0] as String, args[1] as String);
     case 'insertIntoQueue':
-      return await client.insertIntoQueue(args[0] as String, List<String>.from(args[1] as List), args[2] as int);
+      return await client.insertIntoQueue(
+        args[0] as String,
+        List<String>.from(args[1] as List),
+        args[2] as int,
+      );
     case 'setQueue':
-      return await client.setQueue(args[0] as String, List<String>.from(args[1] as List));
+      return await client.setQueue(
+        args[0] as String,
+        List<String>.from(args[1] as List),
+      );
     case 'removeFromQueue':
       return await client.removeFromQueue(args[0] as String, args[1] as int);
     case 'moveInQueue':
-      return await client.moveInQueue(args[0] as String, args[1] as int, args[2] as int);
+      return await client.moveInQueue(
+        args[0] as String,
+        args[1] as int,
+        args[2] as int,
+      );
     case 'clearQueue':
       return await client.clearQueue(args[0] as String);
     case 'getHistory':
@@ -1464,14 +1610,20 @@ Future<dynamic> _executeMethod(_RawOmniSdkClient client, String method, List<dyn
     case 'removeFromHistory':
       return await client.removeFromHistory(args[0] as String, args[1] as int);
     case 'moveInHistory':
-      return await client.moveInHistory(args[0] as String, args[1] as int, args[2] as int);
+      return await client.moveInHistory(
+        args[0] as String,
+        args[1] as int,
+        args[2] as int,
+      );
     case 'clearHistory':
       return await client.clearHistory(args[0] as String);
     case 'getPlaylistSources':
       final result = await client.getPlaylistSources(args[0] as String);
       return result.map((item) => item.writeToBuffer()).toList();
     case 'setPlaylistSources':
-      final sourcesList = (args[1] as List).map((bytes) => PlaylistSourceSpec.fromBuffer(bytes as Uint8List)).toList();
+      final sourcesList = (args[1] as List)
+          .map((bytes) => PlaylistSourceSpec.fromBuffer(bytes as Uint8List))
+          .toList();
       return await client.setPlaylistSources(args[0] as String, sourcesList);
     case 'getEqualizer':
       final result = await client.getEqualizer(args[0] as String);

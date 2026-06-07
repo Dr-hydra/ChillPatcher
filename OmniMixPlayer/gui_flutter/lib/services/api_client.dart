@@ -4,6 +4,7 @@
 ///
 /// Public API is kept compatible with existing providers, migrating from old
 /// JSON models to generated protobuf types where possible.
+library;
 
 import '../utils/json_utils.dart';
 import 'dart:math' as math;
@@ -189,23 +190,23 @@ class ApiClient {
   // ── Library: Tags, Albums, Tracks (gRPC) ──
 
   Future<List<Tag>> getTags({String? moduleId}) async {
-    final resp = await _grpc.library.queryTags(
-      TagQuery(moduleId: moduleId ?? ''),
-    ).timeout(_libraryTimeout);
+    final resp = await _grpc.library
+        .queryTags(TagQuery(moduleId: moduleId ?? ''))
+        .timeout(_libraryTimeout);
     return resp.tags;
   }
 
   Future<List<Album>> getAlbums({String? tagId}) async {
-    final resp = await _grpc.library.queryAlbums(
-      AlbumQuery(tagId: tagId ?? ''),
-    ).timeout(_libraryTimeout);
+    final resp = await _grpc.library
+        .queryAlbums(AlbumQuery(tagId: tagId ?? ''))
+        .timeout(_libraryTimeout);
     return resp.albums;
   }
 
   Future<List<Playlist>> getPlaylists({String? moduleId}) async {
-    final resp = await _grpc.library.queryPlaylists(
-      PlaylistQuery(moduleId: moduleId ?? ''),
-    ).timeout(_libraryTimeout);
+    final resp = await _grpc.library
+        .queryPlaylists(PlaylistQuery(moduleId: moduleId ?? ''))
+        .timeout(_libraryTimeout);
     return resp.playlists;
   }
 
@@ -214,14 +215,16 @@ class ApiClient {
     String? tagId,
     String? playlistId,
   }) async {
-    final resp = await _grpc.library.queryTracks(
-      TrackQuery(
-        albumId: albumId ?? '',
-        playlistId: playlistId ?? '',
-        tagIds: tagId != null ? [tagId] : [],
-        isExcluded: false,
-      ),
-    ).timeout(_libraryTimeout);
+    final resp = await _grpc.library
+        .queryTracks(
+          TrackQuery(
+            albumId: albumId ?? '',
+            playlistId: playlistId ?? '',
+            tagIds: tagId != null ? [tagId] : [],
+            isExcluded: false,
+          ),
+        )
+        .timeout(_libraryTimeout);
     return resp.tracks;
   }
 
@@ -274,8 +277,9 @@ class ApiClient {
     if (data['displayName'] != null) {
       profile.displayName = data['displayName'] as String? ?? '';
     }
-    if (data['volume'] != null)
+    if (data['volume'] != null) {
       profile.volume = (data['volume'] as num).toDouble();
+    }
     if (data['targetLatency'] != null) {
       profile.targetLatency = (data['targetLatency'] as num).toDouble();
     }
@@ -326,12 +330,20 @@ class ApiClient {
     String instanceId,
     String modId,
     String gameName,
-    String mode,
-  ) async {
+    String mode, {
+    InstanceCapabilities? capabilities,
+  }) async {
     final profile = await _loadProfileForUpdate(instanceId)
+      ..kind = InstanceKind.INSTANCE_KIND_GAME_MOD
       ..modId = modId
       ..gameName = gameName
       ..displayName = gameName;
+    // Use mod-declared capabilities if provided, otherwise ensure non-null
+    profile.capabilities =
+        capabilities ??
+        (profile.hasCapabilities()
+            ? profile.capabilities
+            : InstanceCapabilities());
     await _grpc.instance.updateProfile(
       UpdateProfileRequest(instanceId: instanceId, profile: profile),
     );
@@ -391,7 +403,6 @@ class ApiClient {
 
   InstanceCapabilities _fullGuiCapabilities() => InstanceCapabilities()
     ..serverControlledPlayback = true
-    ..clientManagedPlayback = true
     ..queueManagement = true
     ..playlistManagement = true
     ..multiplePlaylists = true

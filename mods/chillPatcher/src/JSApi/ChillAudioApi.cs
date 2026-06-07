@@ -30,7 +30,7 @@ namespace ChillPatcher.JSApi
             var facility = GetFacilityMusic();
             if (facility == null) return;
             facility.OnClickButtonPlayOrPauseMusic();
-            _ = OmniMixIntegration.Instance.Toggle();
+            // Game handles play/pause state internally; no backend Toggle needed.
         }
 
         public void pause()
@@ -38,7 +38,7 @@ namespace ChillPatcher.JSApi
             var facility = GetFacilityMusic();
             if (facility == null) return;
             facility.PauseMusic();
-            _ = OmniMixIntegration.Instance.Pause();
+            // Backend pause is NOT sent — game AudioSource handles the actual audio gating.
         }
 
         public void resume()
@@ -46,7 +46,7 @@ namespace ChillPatcher.JSApi
             var facility = GetFacilityMusic();
             if (facility == null) return;
             facility.UnPauseMusic();
-            _ = OmniMixIntegration.Instance.Resume();
+            // Backend resume is NOT sent — game AudioSource handles the actual audio gating.
         }
 
         public void next()
@@ -54,7 +54,7 @@ namespace ChillPatcher.JSApi
             var facility = GetFacilityMusic();
             if (facility == null) return;
             facility.OnClickButtonSkip();
-            _ = OmniMixIntegration.Instance.Next();
+            // Game's own queue determines the next UUID → Play(uuid).
         }
 
         public void previous()
@@ -67,7 +67,7 @@ namespace ChillPatcher.JSApi
                 var musicService = MusicService_RemoveLimit_Patch.CurrentInstance;
                 musicService?.PlayArugumentMusic(prev, MusicChangeKind.Manual);
             }
-            _ = OmniMixIntegration.Instance.Prev();
+            // Game's own queue determines the previous UUID → Play(uuid).
         }
 
         public void playByIndex(int index)

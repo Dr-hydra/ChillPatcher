@@ -12,19 +12,21 @@
 #include "omni_mix_player/services/playback.pb.h"
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
+#include <filesystem>
 #include <fstream>
-#include <memory>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
 #ifdef _WIN32
+#include <shellapi.h>
 #include <windows.h>
-#include <winhttp.h>
 #endif
 
 namespace {
@@ -74,11 +76,20 @@ std::string read_file_trimmed(const std::string& path) {
 int discover_port() {
     std::vector<std::string> paths;
 #ifdef _WIN32
+    // 1. Game directory — backend writes here on every startup
+    //    (game dir is registered in global_config.json → port_file_dirs)
+    wchar_t exePath[MAX_PATH]{};
+    if (GetModuleFileNameW(nullptr, exePath, MAX_PATH)) {
+        auto gameDir = std::filesystem::path{exePath}.parent_path();
+        paths.emplace_back((gameDir / "omnimix_port.txt").string());
+    }
+    // 2. PUBLIC\OmniMixPlayer (fallback shared location)
     char public_dir[MAX_PATH]{};
     if (GetEnvironmentVariableA("PUBLIC", public_dir, MAX_PATH) > 0) {
         paths.emplace_back(std::string(public_dir) + "\\OmniMixPlayer\\omnimix_port.txt");
     }
 #endif
+    // 3. Current working directory
     paths.emplace_back("omnimix_port.txt");
 
     for (const auto& path : paths) {
@@ -91,6 +102,69 @@ int discover_port() {
         }
     }
     return DEFAULT_PORT;
+}
+
+/// Best-effort: ensure the OmniMixPlayer backend is running.
+void try_start_backend() {
+#ifdef _WIN32
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm) return;
+    SC_HANDLE svc = OpenServiceW(scm, L"OmniMixPlayerBackend",
+                                  SERVICE_QUERY_STATUS | SERVICE_START);
+    if (svc) {
+        SERVICE_STATUS status{};
+        if (QueryServiceStatus(svc, &status) &&
+            status.dwCurrentState == SERVICE_STOPPED) {
+            StartServiceW(svc, 0, nullptr);
+        }
+        CloseServiceHandle(svc);
+    } else {
+        // Service not installed — try launching exe next to host process
+        wchar_t hostPath[MAX_PATH]{};
+        if (GetModuleFileNameW(nullptr, hostPath, MAX_PATH)) {
+            auto exePath = std::filesystem::path{hostPath}.parent_path() /
+                           "OmniMixPlayer.Backend.exe";
+            if (std::filesystem::exists(exePath)) {
+                SHELLEXECUTEINFOW sei{sizeof(sei)};
+                sei.fMask = SEE_MASK_NOASYNC | SEE_MASK_NOCLOSEPROCESS;
+                sei.lpVerb = L"open";
+                sei.lpFile = exePath.c_str();
+                sei.nShow = SW_HIDE;
+                if (ShellExecuteExW(&sei) && sei.hProcess)
+                    CloseHandle(sei.hProcess);
+            }
+        }
+    }
+    CloseServiceHandle(scm);
+#endif
+}
+
+/// Auto-detect a client/instance ID for the host process.
+/// Reads .omnimix_instance_id from the host exe directory;
+/// falls back to the host executable name (lowercased, no extension).
+std::string discover_instance_id() {
+#ifdef _WIN32
+    wchar_t exePath[MAX_PATH]{};
+    if (!GetModuleFileNameW(nullptr, exePath, MAX_PATH))
+        return "unknown";
+
+    std::filesystem::path exeDir = std::filesystem::path{exePath}.parent_path();
+
+    // 1. Try .omnimix_instance_id
+    auto idFile = exeDir / ".omnimix_instance_id";
+    auto text = read_file_trimmed(idFile.string());
+    if (!text.empty()) return text;
+
+    // 2. Fallback: process name (lowercase, no extension)
+    std::string name = std::filesystem::path{exePath}.filename().string();
+    auto dot = name.rfind('.');
+    if (dot != std::string::npos) name = name.substr(0, dot);
+    for (auto& c : name)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return name;
+#else
+    return "unknown";
+#endif
 }
 
 std::string grpc_frame(const MessageLite& message) {
@@ -216,7 +290,6 @@ int grpc_web_unary(
 void fill_capabilities(uint32_t flags, omni_mix_player::InstanceCapabilities* caps) {
     if (!caps) return;
     caps->set_server_controlled_playback((flags & OMNI_PCM_CAP_SERVER_CONTROLLED_PLAYBACK) != 0);
-    caps->set_client_managed_playback((flags & OMNI_PCM_CAP_CLIENT_MANAGED_PLAYBACK) != 0);
     caps->set_queue_management((flags & OMNI_PCM_CAP_QUEUE_MANAGEMENT) != 0);
     caps->set_playlist_management((flags & OMNI_PCM_CAP_PLAYLIST_MANAGEMENT) != 0);
     caps->set_shuffle((flags & OMNI_PCM_CAP_SHUFFLE) != 0);
@@ -229,12 +302,12 @@ void fill_capabilities(uint32_t flags, omni_mix_player::InstanceCapabilities* ca
     caps->set_unlimited_tags((flags & OMNI_PCM_CAP_UNLIMITED_TAGS) != 0);
     caps->set_album_filtering((flags & OMNI_PCM_CAP_ALBUM_FILTERING) != 0);
     caps->set_audio_playback((flags & OMNI_PCM_CAP_AUDIO_PLAYBACK) != 0);
+    caps->set_custom_system_media_service((flags & OMNI_PCM_CAP_CUSTOM_SYSTEM_MEDIA_SERVICE) != 0);
 }
 
 uint32_t capability_flags(const omni_mix_player::InstanceCapabilities& caps) {
     uint32_t flags = 0;
     if (caps.server_controlled_playback()) flags |= OMNI_PCM_CAP_SERVER_CONTROLLED_PLAYBACK;
-    if (caps.client_managed_playback()) flags |= OMNI_PCM_CAP_CLIENT_MANAGED_PLAYBACK;
     if (caps.queue_management()) flags |= OMNI_PCM_CAP_QUEUE_MANAGEMENT;
     if (caps.playlist_management()) flags |= OMNI_PCM_CAP_PLAYLIST_MANAGEMENT;
     if (caps.shuffle()) flags |= OMNI_PCM_CAP_SHUFFLE;
@@ -247,6 +320,7 @@ uint32_t capability_flags(const omni_mix_player::InstanceCapabilities& caps) {
     if (caps.unlimited_tags()) flags |= OMNI_PCM_CAP_UNLIMITED_TAGS;
     if (caps.album_filtering()) flags |= OMNI_PCM_CAP_ALBUM_FILTERING;
     if (caps.audio_playback()) flags |= OMNI_PCM_CAP_AUDIO_PLAYBACK;
+    if (caps.custom_system_media_service()) flags |= OMNI_PCM_CAP_CUSTOM_SYSTEM_MEDIA_SERVICE;
     return flags;
 }
 
@@ -257,11 +331,16 @@ void fill_profile(const omni_mix_player::InstanceProfile& profile, OmniPcmInstan
     copy_text(out->display_name, sizeof(out->display_name), profile.display_name());
     copy_text(out->mod_id, sizeof(out->mod_id), profile.mod_id());
     copy_text(out->game_name, sizeof(out->game_name), profile.game_name());
-    copy_text(out->active_queue_id, sizeof(out->active_queue_id), profile.active_queue_id());
     out->kind = static_cast<int32_t>(profile.kind());
     out->capability_flags = capability_flags(profile.capabilities());
     out->volume = profile.volume();
     out->target_latency = profile.target_latency();
+    const auto& caps = profile.capabilities();
+    out->max_imported_playlists = caps.has_max_imported_playlists() ? caps.max_imported_playlists() : 0;
+    out->max_tags = caps.has_max_tags() ? caps.max_tags() : 0;
+    out->max_playlist_entries = caps.has_max_playlist_entries() ? caps.max_playlist_entries() : 0;
+    out->created_at = profile.has_created_at() ? profile.created_at().seconds() : 0;
+    out->updated_at = profile.has_updated_at() ? profile.updated_at().seconds() : 0;
 }
 
 void fill_summary(const omni_mix_player::InstanceSummary& summary, OmniPcmInstanceSummaryInfo* out) {
@@ -275,6 +354,7 @@ void fill_summary(const omni_mix_player::InstanceSummary& summary, OmniPcmInstan
     out->kind = static_cast<int32_t>(summary.kind());
     out->is_online = summary.is_online() ? 1 : 0;
     out->queue_count = summary.queue_count();
+    out->connected_at = summary.has_connected_at() ? summary.connected_at().seconds() : 0;
 }
 
 void fill_queue_track(const omni_mix_player::QueueTrack& track, OmniPcmQueueTrackInfo* out) {
@@ -384,100 +464,48 @@ void fill_event(const omni_mix_player::WsEvent& evt, OmniPcmEventInfo* out) {
         case omni_mix_player::WsEvent::kBackendState:
             out->backend_running = evt.backend_state().running() ? 1 : 0;
             break;
+        case omni_mix_player::WsEvent::kVolumeChanged:
+            copy_text(out->instance_id, sizeof(out->instance_id), evt.volume_changed().instance_id());
+            out->volume = evt.volume_changed().volume();
+            break;
+        case omni_mix_player::WsEvent::kLatencyChanged:
+            copy_text(out->instance_id, sizeof(out->instance_id), evt.latency_changed().instance_id());
+            out->latency = evt.latency_changed().latency();
+            break;
         default:
             break;
     }
 }
 
-#ifdef _WIN32
-std::wstring widen_ascii(const std::string& text) {
-    return std::wstring(text.begin(), text.end());
-}
-
 void websocket_event_loop(OmniPcmClientContext* c, OmniPcmEventCallback callback, void* user_data) {
-    HINTERNET session = WinHttpOpen(L"OmniPcmShared/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session) {
-        c->set_error("WinHttpOpen failed");
-        return;
-    }
-    DWORD receive_timeout = 1000;
-    WinHttpSetOption(session, WINHTTP_OPTION_RECEIVE_TIMEOUT, &receive_timeout, sizeof(receive_timeout));
+    std::string url = "ws://" + c->host + ":" + std::to_string(c->port) + "/ws";
 
-    HINTERNET connect = WinHttpConnect(session, widen_ascii(c->host).c_str(),
-        static_cast<INTERNET_PORT>(c->port), 0);
-    if (!connect) {
-        c->set_error("WinHttpConnect failed");
-        WinHttpCloseHandle(session);
+    httplib::ws::WebSocketClient ws(url);
+    ws.set_websocket_ping_interval(5);
+    ws.set_read_timeout(10, 0);
+
+    if (!ws.connect()) {
+        c->set_error("WebSocket connect failed");
         return;
     }
 
-    HINTERNET request = WinHttpOpenRequest(connect, L"GET", L"/ws", nullptr,
-        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
-    if (!request) {
-        c->set_error("WinHttpOpenRequest failed");
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        return;
-    }
-
-    DWORD zero = 0;
-    WinHttpSetOption(request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, &zero, sizeof(zero));
-    if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) ||
-        !WinHttpReceiveResponse(request, nullptr)) {
-        c->set_error("WebSocket upgrade failed");
-        WinHttpCloseHandle(request);
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        return;
-    }
-
-    HINTERNET ws = WinHttpWebSocketCompleteUpgrade(request, 0);
-    WinHttpCloseHandle(request);
-    if (!ws) {
-        c->set_error("WinHttpWebSocketCompleteUpgrade failed");
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        return;
-    }
-
-    std::vector<uint8_t> chunk(64 * 1024);
-    std::string message;
+    std::string msg;
     while (!c->event_stop.load()) {
-        DWORD read = 0;
-        WINHTTP_WEB_SOCKET_BUFFER_TYPE type{};
-        DWORD status = WinHttpWebSocketReceive(ws, chunk.data(), static_cast<DWORD>(chunk.size()), &read, &type);
-        if (status == ERROR_WINHTTP_TIMEOUT) {
-            continue;
-        }
-        if (status != NO_ERROR) {
-            c->set_error("WinHttpWebSocketReceive failed");
-            break;
-        }
-        if (type == WINHTTP_WEB_SOCKET_CLOSE_BUFFER_TYPE) {
-            break;
-        }
-        if (type == WINHTTP_WEB_SOCKET_BINARY_FRAGMENT_BUFFER_TYPE ||
-            type == WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE) {
-            message.append(reinterpret_cast<const char*>(chunk.data()), read);
-            if (type == WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE) {
-                omni_mix_player::WsEvent evt;
-                if (evt.ParseFromString(message)) {
-                    OmniPcmEventInfo info{};
-                    fill_event(evt, &info);
-                    callback(&info, user_data);
-                }
-                message.clear();
+        auto result = ws.read(msg);
+        if (result == httplib::ws::ReadResult::Binary || result == httplib::ws::ReadResult::Text) {
+            omni_mix_player::WsEvent evt;
+            if (evt.ParseFromString(msg)) {
+                OmniPcmEventInfo info{};
+                fill_event(evt, &info);
+                callback(&info, user_data);
             }
+        } else if (!ws.is_open()) {
+            break;
         }
     }
 
-    WinHttpWebSocketClose(ws, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
-    WinHttpCloseHandle(ws);
-    WinHttpCloseHandle(connect);
-    WinHttpCloseHandle(session);
+    ws.close();
 }
-#endif
 
 template <typename Request, typename Response>
 int unary_playback(OmniPcmClientContext* c, const char* method, const char* instance_id) {
@@ -503,6 +531,10 @@ int fill_counted_buffer(int total, Repeated&& fill, int32_t* inout_count) {
 } // namespace
 
 OMNI_PCM_API OmniPcmClientHandle OmniPcmClient_Create(const OmniPcmClientConfig* config) {
+    // Best-effort: auto-start the backend before discovering the port.
+    // The SDK handles port discovery but not backend lifecycle.
+    try_start_backend();
+
     auto* c = new OmniPcmClientContext();
     if (config) {
         if (config->host && *config->host) c->host = config->host;
@@ -536,10 +568,19 @@ OMNI_PCM_API int OmniPcmClient_ConnectInstance(
     const OmniPcmConnectOptions* options,
     OmniPcmConnectionInfo* out_info) {
     auto* c = client_ctx(client);
-    if (!c || !options || !options->client_id || !out_info) return OMNI_PCM_BAD_ARGUMENT;
+    if (!c || !options || !out_info) return OMNI_PCM_BAD_ARGUMENT;
+
+    // Auto-detect instance ID when the caller doesn't provide one.
+    // Game mods can pass nullptr / empty string and let the SDK
+    // derive the ID from .omnimix_instance_id or the process name.
+    std::string effective_client_id;
+    if (options->client_id && *options->client_id)
+        effective_client_id = options->client_id;
+    else
+        effective_client_id = discover_instance_id();
 
     omni_mix_player::InstanceConnectRequest req;
-    req.set_client_id(options->client_id);
+    req.set_client_id(effective_client_id);
     req.set_kind(static_cast<omni_mix_player::InstanceKind>(
         options->kind > 0 ? options->kind : OMNI_PCM_INSTANCE_KIND_GAME_MOD));
     if (options->mod_id) req.set_mod_id(options->mod_id);
@@ -547,6 +588,12 @@ OMNI_PCM_API int OmniPcmClient_ConnectInstance(
     if (options->display_name) req.set_display_name(options->display_name);
     req.set_no_instance(options->no_instance != 0);
     fill_capabilities(options->capability_flags, req.mutable_capabilities());
+    if (options->max_imported_playlists > 0)
+        req.mutable_capabilities()->set_max_imported_playlists(options->max_imported_playlists);
+    if (options->max_tags > 0)
+        req.mutable_capabilities()->set_max_tags(options->max_tags);
+    if (options->max_playlist_entries > 0)
+        req.mutable_capabilities()->set_max_playlist_entries(options->max_playlist_entries);
 
     omni_mix_player::InstanceConnectResponse resp;
     int r = grpc_web_unary(c, "omni_mix_player.InstanceService", "Connect", req, &resp);
@@ -636,11 +683,24 @@ OMNI_PCM_API int OmniPcmClient_UpdateProfile(
     existing.set_display_name(profile->display_name);
     existing.set_mod_id(profile->mod_id);
     existing.set_game_name(profile->game_name);
-    existing.set_active_queue_id(profile->active_queue_id);
     existing.set_kind(static_cast<omni_mix_player::InstanceKind>(profile->kind));
     existing.set_volume(profile->volume);
     existing.set_target_latency(profile->target_latency);
     fill_capabilities(profile->capability_flags, existing.mutable_capabilities());
+    if (profile->max_imported_playlists > 0)
+        existing.mutable_capabilities()->set_max_imported_playlists(profile->max_imported_playlists);
+    else
+        existing.mutable_capabilities()->clear_max_imported_playlists();
+
+    if (profile->max_tags > 0)
+        existing.mutable_capabilities()->set_max_tags(profile->max_tags);
+    else
+        existing.mutable_capabilities()->clear_max_tags();
+
+    if (profile->max_playlist_entries > 0)
+        existing.mutable_capabilities()->set_max_playlist_entries(profile->max_playlist_entries);
+    else
+        existing.mutable_capabilities()->clear_max_playlist_entries();
 
     omni_mix_player::UpdateProfileRequest req;
     req.set_instance_id(profile->instance_id);
@@ -1113,15 +1173,18 @@ OMNI_PCM_API int OmniPcmClient_StartEvents(
     if (!c || !callback) return OMNI_PCM_BAD_ARGUMENT;
     OmniPcmClient_StopEvents(client);
     c->event_stop.store(false);
-#ifdef _WIN32
-    c->event_thread = std::thread([c, callback, user_data]() {
-        websocket_event_loop(c, callback, user_data);
-    });
+    try {
+        c->event_thread = std::thread([c, callback, user_data]() {
+            websocket_event_loop(c, callback, user_data);
+        });
+    } catch (const std::exception& ex) {
+        c->set_error(ex.what());
+        return OMNI_PCM_ERROR;
+    } catch (...) {
+        c->set_error("Unknown thread creation error");
+        return OMNI_PCM_ERROR;
+    }
     return OMNI_PCM_OK;
-#else
-    c->set_error("Event WebSocket client is currently implemented for Windows only");
-    return OMNI_PCM_UNSUPPORTED;
-#endif
 }
 
 /* ── Library queries ──────────────────────────────────────────── */

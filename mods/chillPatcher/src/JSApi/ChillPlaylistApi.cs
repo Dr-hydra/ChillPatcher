@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using BepInEx.Logging;
 using Bulbul;
 using ChillPatcher.Patches.UIFramework;
+using ChillPatcher.SDK.Models;
 using ChillPatcher.UIFramework.Music;
 using ChillPatcher.UIFramework.Audio;
 using Newtonsoft.Json.Linq;
@@ -25,11 +26,17 @@ namespace ChillPatcher.JSApi
             _logger = logger;
         }
 
-        #region Tag 查询 (from OmniMixPlayer)
+        #region Playlist 查询 (local, populated by ImportSongsToGame)
 
-        public async Task<string> getAllTags()
+        public Task<string> getAllTags()
         {
-            return await OmniMixIntegration.Instance.GetTagsJson();
+            var playlists = OmniMixIntegration.Instance?.GetAllPlaylists() ?? new List<TagInfo>();
+            return Task.FromResult(JSApiHelper.ToJson(playlists.Select(p => new Dictionary<string, object>
+            {
+                ["id"] = p.TagId ?? "",
+                ["name"] = p.DisplayName ?? "",
+                ["moduleId"] = p.ModuleId ?? "",
+            }).ToArray()));
         }
 
         #endregion
@@ -115,7 +122,7 @@ namespace ChillPatcher.JSApi
             var audio = FindGameAudioByUuid(uuid);
             if (audio == null) return false;
             PlayQueueManager.Instance?.Enqueue(audio);
-            _ = OmniMixIntegration.Instance.AddToQueue(uuid);
+            // Game manages its own queue; no backend AddToQueue needed.
             return true;
         }
 
