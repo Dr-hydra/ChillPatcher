@@ -132,8 +132,7 @@
     ═══════════════════════════════════════════════
   -->
   <PropertyGroup Condition="'$(CHILL_USE_PRIVATE_PACKAGE)' != 'true'">
-    <SteamLibraryRoot Condition="'$(SteamLibraryRoot)' == ''">$(CHILL_STEAM_LIBRARY)</SteamLibraryRoot>
-    <SteamLibraryRoot Condition="'$(SteamLibraryRoot)' == ''">D:\SteamLibrary</SteamLibraryRoot>
+    <SteamLibraryRoot>$(CHILL_STEAM_LIBRARY)</SteamLibraryRoot>
     <GamePath>$(SteamLibraryRoot)\steamapps\common\Chill with You Lo-Fi Story\Chill With You_Data\Managed</GamePath>
     <BepInExCorePath>$(SteamLibraryRoot)\steamapps\common\Chill with You Lo-Fi Story\BepInEx\core</BepInExCorePath>
   </PropertyGroup>

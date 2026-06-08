@@ -151,6 +151,10 @@ class BuildGUI:
         ttk.Button(top, text="全选叶子", command=self._select_all).pack(side=tk.LEFT, padx=2)
         ttk.Button(top, text="全不选", command=self._deselect_all).pack(side=tk.LEFT, padx=2)
 
+        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
+        ttk.Button(top, text="⚙ 生成配置", command=self._on_generate_config).pack(
+            side=tk.LEFT, padx=2)
+
         # 主区域: 左 | 右上+右下
         pw = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         pw.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -460,6 +464,17 @@ class BuildGUI:
                 leaf.enabled = False
         self._update_all_rows()
         self._update_progress()
+
+    def _on_generate_config(self):
+        """生成/刷新 build_config.json 配置文件。"""
+        import build_config as C
+        C.load_config()  # 不存在则创建默认，存在则补齐缺失键
+        messagebox.showinfo(
+            "配置已生成",
+            f"配置文件已生成/更新:\n{C.CONFIG_FILE}\n\n"
+            "编辑此文件可修改 Steam 库路径、工具链路径等。\n"
+            "留空 = 自动发现。修改后重新启动 GUI 生效。",
+        )
 
     # ── Runner 回调 ──
 

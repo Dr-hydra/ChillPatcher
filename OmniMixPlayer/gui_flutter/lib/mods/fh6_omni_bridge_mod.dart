@@ -3,12 +3,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:omnimix_gui/l10n/app_localizations.dart';
+import '../generated/omni_mix_player/models/instance.pb.dart';
 import '../models/mod_manifest.dart';
 
 import '../services/mod_deployment_service.dart';
 
 class Fh6OmniBridgeMod extends ModDeclaration {
-  const Fh6OmniBridgeMod()
+  Fh6OmniBridgeMod()
     : super(
         id: 'fh6_omni_bridge',
         name: 'Forza Horizon 6 Omni Bridge',
@@ -18,6 +19,21 @@ class Fh6OmniBridgeMod extends ModDeclaration {
         rootFilesToLink: const ['version.dll', 'OmniPcmShared.dll'],
         rootFilesNoBackup: const ['version.dll', 'OmniPcmShared.dll'],
         mode: 'server',
+        capabilities: InstanceCapabilities(
+          serverControlledPlayback: true,
+          queueManagement: true,
+          playlistManagement: true,
+          multiplePlaylists: true,
+          tagFiltering: true,
+          unlimitedTags: true,
+          albumFiltering: true,
+          shuffle: true,
+          repeat: true,
+          seek: true,
+          volumeControl: true,
+          equalizer: true,
+          audioPlayback: true,
+        ),
       );
 
   @override

@@ -4,7 +4,7 @@
 ; =============================================================================
 
 #define MyAppName "OmniMixPlayer"
-#define MyAppVersion "3.0.0"
+#define MyAppVersion "3.0.1"
 #define MyAppPublisher "Kevin-2483"
 #define MyAppURL "https://github.com/Kevin-2483/Chill"
 #define MyAppExeName "omnimix_gui.exe"
@@ -30,7 +30,7 @@ DisableProgramGroupPage=yes
 ;PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=G:/Csharp/Chill/release
-OutputBaseFilename=OmniMixPlayer_V3.0.0_installer
+OutputBaseFilename=OmniMixPlayer_V3.0.1_installer
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern

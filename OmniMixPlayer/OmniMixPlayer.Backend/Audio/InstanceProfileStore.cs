@@ -14,7 +14,7 @@ namespace OmniMixPlayer.Backend.Audio
     /// </summary>
     public sealed class InstanceProfileStore : IDisposable
     {
-        private const int InstanceDbVersion = 2;
+        private const int InstanceDbVersion = 3;
         private readonly LiteDatabase _db;
         private readonly ILogger _logger;
 
