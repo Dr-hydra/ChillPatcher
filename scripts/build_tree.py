@@ -163,12 +163,12 @@ def _flutter_gui(full: bool, skip_flutter: bool) -> TaskNode:
                   run_fn=lambda: run_cmd(["cargo", "build", "--release"],
                                          cwd=rust_dir))
 
-    g.create_leaf("build windows --release", "编译 Flutter Windows",
-                  run_fn=_build_flutter_windows)
-
-    # ── 两个 asset zip ──
+    # ── 两个 asset zip（必须在 Flutter build 之前，Flutter 编译时打包 assets/）──
     g.children.append(_chillpatcher_asset(full))
     g.children.append(_fh6_asset(full))
+
+    g.create_leaf("build windows --release", "编译 Flutter Windows",
+                  run_fn=_build_flutter_windows)
 
     # Version info
     g.create_leaf("Version Info", "写入 version_info.json → assets/",
