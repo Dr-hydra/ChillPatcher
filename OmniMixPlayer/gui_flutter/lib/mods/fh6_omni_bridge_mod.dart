@@ -5,7 +5,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:omnimix_gui/l10n/app_localizations.dart';
 import '../generated/omni_mix_player/models/instance.pb.dart';
 import '../models/mod_manifest.dart';
-
 import '../services/mod_deployment_service.dart';
 
 class Fh6OmniBridgeMod extends ModDeclaration {
@@ -14,7 +13,7 @@ class Fh6OmniBridgeMod extends ModDeclaration {
         id: 'fh6_omni_bridge',
         name: 'Forza Horizon 6 Omni Bridge',
         version:
-            '2.0.0', // fallback; authoritative version in assets/version_info.json → mod_versions.fh6_omni_bridge
+            '2.0.1', // fallback; authoritative version in assets/version_info.json → mod_versions.fh6_omni_bridge
         archiveName: 'FH6OmniBridge.zip',
         folderName: 'fh6-omnimix',
         rootFilesToLink: const ['version.dll', 'OmniPcmShared.dll'],
@@ -36,6 +35,10 @@ class Fh6OmniBridgeMod extends ModDeclaration {
           audioPlayback: true,
         ),
       );
+
+  @override
+  String get version =>
+      ModDeploymentService.getBundledVersionSync('fh6_omni_bridge') ?? '2.0.2';
 
   @override
   bool get hasSettings => true;

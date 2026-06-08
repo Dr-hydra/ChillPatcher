@@ -192,6 +192,16 @@ def _assemble() -> bool:
 
     # Modules
     info("Modules...")
+    # Assemblies already loaded by the Backend host process (same process, no copy needed)
+    _HOST_ASSEMBLIES = {
+        "Google.Protobuf",
+        "Grpc.AspNetCore.Server", "Grpc.AspNetCore.Server.ClientFactory",
+        "Grpc.Core.Api", "Grpc.Net.Client", "Grpc.Net.ClientFactory",
+        "Grpc.Net.Common",
+        "Newtonsoft.Json",
+        "Microsoft.Extensions.DependencyInjection.Abstractions",
+        "Microsoft.Extensions.Logging.Abstractions",
+    }
     for src_name, module_id in PLAYER_MODULE_MAP:
         src_dir = PLAYER_MODULES_BUILD / src_name
         dst_dir = PLAYER_BUILD / "modules" / module_id
@@ -202,6 +212,8 @@ def _assemble() -> bool:
         dst_dir.mkdir(parents=True, exist_ok=True)
         for ext in ("*.dll", "*.json", "*.png"):
             for f in src_dir.glob(ext):
+                if f.stem in _HOST_ASSEMBLIES:
+                    continue  # already provided by Backend host
                 copy_file(f, dst_dir)
         # Native from build output
         for src_native in [src_dir / "native" / "x64"]:

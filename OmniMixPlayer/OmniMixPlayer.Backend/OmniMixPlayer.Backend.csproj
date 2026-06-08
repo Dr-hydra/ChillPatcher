@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="LiteDB" Version="5.0.21" />
     <PackageReference Include="Grpc.AspNetCore" Version="2.67.*" />
     <PackageReference Include="Grpc.AspNetCore.Web" Version="2.67.*" />

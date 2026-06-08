@@ -421,6 +421,18 @@ def _copy_native_decoders() -> bool:
 
 
 def _make_copy_module_fn(src_name: str, module_id: str):
+    # Assemblies already loaded by the Backend host process.
+    # Modules are loaded into the same process, so they don't need copies.
+    _HOST_ASSEMBLIES = {
+        "Google.Protobuf",
+        "Grpc.AspNetCore.Server", "Grpc.AspNetCore.Server.ClientFactory",
+        "Grpc.Core.Api", "Grpc.Net.Client", "Grpc.Net.ClientFactory",
+        "Grpc.Net.Common",
+        "Newtonsoft.Json",
+        "Microsoft.Extensions.DependencyInjection.Abstractions",
+        "Microsoft.Extensions.Logging.Abstractions",
+    }
+
     def _fn():
         src_dir = C.PLAYER_MODULES_BUILD / src_name
         dst_dir = C.PLAYER_BUILD / "modules" / module_id
@@ -430,6 +442,8 @@ def _make_copy_module_fn(src_name: str, module_id: str):
         dst_dir.mkdir(parents=True, exist_ok=True)
         for ext in ("*.dll", "*.json", "*.png"):
             for f in src_dir.glob(ext):
+                if f.stem in _HOST_ASSEMBLIES:
+                    continue  # already provided by Backend host
                 copy_file(f, dst_dir)
         # Native from build output
         for src_n in [src_dir / "native" / "x64"]:
