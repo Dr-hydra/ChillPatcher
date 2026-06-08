@@ -254,11 +254,11 @@ void OmniPcmSource::pump(RingBuffer& ring) {
         }
     }
 
-    // 5. Check for stream errors
+    // 5. Check for stream errors — backend handles auto-advance for
+    //    ServerControlledPlayback instances, so we must NOT send Next() here.
     if (api_.has_error(pcm_)) {
-        log::warn("[omni] shared memory stream error: {} — requesting skip",
+        log::warn("[omni] shared memory stream error: {} — waiting for server to handle",
                   api_.last_error(pcm_));
-        if (connected_) api_.client_command(client_, instance_id_.c_str(), OMNI_PCM_COMMAND_NEXT);
         reset_stream_state(&ring);
         eof_advanced_ = false;
         return;
