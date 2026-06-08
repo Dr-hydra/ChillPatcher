@@ -27,3 +27,12 @@ build_logs/
 # Flutter web build outputs
 **/wwwroot/
 *.pyc
+# Reference-only directories (not part of the build)
+game/
+NativePlugins/dr_libs/
+NativePlugins/fdk-aac/
+NativePlugins/minimp4/
+
+# 游戏 DLL 编译引用（由私有 NuGet 包 ChillPatcher.GameRefs 提供）
+mods/chillPatcher/src/lib/
+chillPatcher-game-refs/

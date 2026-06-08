@@ -1,5 +1,10 @@
 name: Build & Package
 
+# 新 commit push 时自动取消旧的在跑任务
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main, master]
@@ -11,7 +16,7 @@ on:
         description: "构建模式"
         required: true
         type: choice
-        default: "installer"
+        default: "player"
         options:
           - all
           - player
@@ -20,7 +25,7 @@ on:
       full:
         description: "完整构建 (restore + native 全量编译)"
         type: boolean
-        default: false
+        default: true
 
 jobs:
   build:
@@ -106,6 +111,16 @@ jobs:
           Write-Host "MSBuild path:"
           Resolve-Path "${env:ProgramFiles}\Microsoft Visual Studio\2022\*\MSBuild\Current\Bin\MSBuild.exe" -ErrorAction SilentlyContinue
 
+      # 配置私有 NuGet 源认证
+      - name: Configure private NuGet auth
+        shell: pwsh
+        run: |
+          dotnet nuget update source github-private `
+            --username "${{ github.repository_owner }}" `
+            --password "${{ secrets.PACKAGES_PAT }}" `
+            --store-password-in-clear-text `
+            --configfile nuget.config
+
       # Python 3.11 — 构建脚本
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -116,7 +131,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.27.x"
+          flutter-version: "3.44.x"
           channel: stable
 
       # Node.js + npm — esbuild for UI (default, window-manager)
@@ -166,11 +181,14 @@ jobs:
         shell: pwsh
         env:
           INNOSETUP: "C:\\Program Files\\Inno Setup 7"
+          PYTHONIOENCODING: utf-8
+          PYTHONUNBUFFERED: 1
+          CHILL_USE_PRIVATE_PACKAGE: "true"
         run: |
-          $mode = if ('${{ inputs.mode }}') { '${{ inputs.mode }}' } else { 'installer' }
-          $fullFlag = if ('${{ inputs.full }}' -eq 'true') { '--full' } else { '' }
+          $mode = if ('${{ inputs.mode }}') { '${{ inputs.mode }}' } else { 'player' }
+          $fullFlag = if ('${{ inputs.full }}' -eq 'false') { '' } else { '--full' }
           Write-Host "Mode: $mode  Full: $fullFlag"
-          python scripts/ci_build.py $mode $fullFlag
+          python -u scripts/ci_build.py $mode $fullFlag
 
       # ═══════════════════════════════════════
       #  Display Logs in Console (折叠展开)
