@@ -5,7 +5,7 @@
 
 #define MyAppName "OmniMixPlayer"
 #ifndef MyAppVersion
-  #define MyAppVersion "3.0.4"
+  #define MyAppVersion "3.0.5"
 #endif
 #define MyAppPublisher "Dr-hydra"
 #define MyAppURL "https://github.com/Dr-hydra/OmniMix-VBNet-Frontend"
@@ -370,6 +370,7 @@ begin
   begin
     DeleteTreeRequired(ExpandConstant('{localappdata}\go-musicfox'));
     DeleteTreeRequired(ExpandConstant('{sys}\config\systemprofile\AppData\Local\go-musicfox'));
+    DeleteTreeRequired(ExpandConstant('{sys}\config\systemprofile\AppData\Roaming\go-musicfox'));
   end;
 
   if CleanupPage.Values[4] then

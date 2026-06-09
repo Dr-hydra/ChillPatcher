@@ -735,7 +735,7 @@ Public Class PageOmniMixRight
             If (InitializeBackend OrElse InitializeLibrary OrElse InitializeSources) AndAlso BackendRoots.Count = 0 Then
                 Throw New DirectoryNotFoundException("未找到有效的 OmniMix 后端目录，无法初始化后端数据。")
             End If
-            If InitializeBackend OrElse InitializeLibrary OrElse InitializeSources Then Await StopBackendForInitializationAsync()
+            If InitializeBackend OrElse InitializeLibrary OrElse InitializeSources Then Await StopBackendForInitializationAsync(BackendRoots)
             If InitializeSettings Then
                 For Each Key In Settings.Entries.Keys.ToList()
                     Settings.Reset(Key)
@@ -763,7 +763,7 @@ Public Class PageOmniMixRight
         End Try
     End Sub
 
-    Private Async Function StopBackendForInitializationAsync() As Task
+    Private Async Function StopBackendForInitializationAsync(BackendRoots As IEnumerable(Of String)) As Task
         If Not String.IsNullOrWhiteSpace(CurrentBaseUrl) Then
             Try
                 Await OmniMixApiClient.StopBackendAsync(CurrentBaseUrl)
@@ -774,8 +774,34 @@ Public Class PageOmniMixRight
         If Await OmniMixPlatformService.GetServiceStateAsync() = OmniMixServiceState.Running Then
             Await OmniMixPlatformService.StopServiceAsync()
         End If
-        Await Task.Delay(1000)
+        Await Task.Delay(1500)
+        Await Task.Run(Sub() StopBackendProcesses(BackendRoots))
     End Function
+
+    Private Shared Sub StopBackendProcesses(BackendRoots As IEnumerable(Of String))
+        Dim NormalizedRoots = BackendRoots.
+            Where(Function(Item) Not String.IsNullOrWhiteSpace(Item)).
+            Select(Function(Item) System.IO.Path.GetFullPath(Item).TrimEnd("\"c, "/"c)).
+            ToList()
+
+        For Each Proc In Process.GetProcessesByName("OmniMixPlayer.Backend")
+            Using Proc
+                Try
+                    Dim ProcessPath = Proc.MainModule?.FileName
+                    If String.IsNullOrWhiteSpace(ProcessPath) Then Continue For
+                    Dim ProcessRoot = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(ProcessPath)).TrimEnd("\"c, "/"c)
+                    If Not NormalizedRoots.Any(Function(Item) String.Equals(Item, ProcessRoot, StringComparison.OrdinalIgnoreCase)) Then Continue For
+
+                    If Not Proc.HasExited Then
+                        Proc.Kill(True)
+                        Proc.WaitForExit(5000)
+                    End If
+                Catch Ex As Exception
+                    Logger.Warn(Ex, "初始化前停止残留后端进程失败")
+                End Try
+            End Using
+        Next
+    End Sub
 
     Private Async Function GetInitializationBackendRootsAsync() As Task(Of List(Of String))
         Dim BackendPaths As New List(Of String) From {
@@ -838,13 +864,51 @@ Public Class PageOmniMixRight
                 End If
                 Dim ModulesDir = System.IO.Path.Combine(BackendRoot, "modules")
                 If Directory.Exists(ModulesDir) Then
+                    DeleteKnownModuleLoginFiles(ModulesDir)
                     For Each ModuleDir In Directory.GetDirectories(ModulesDir)
                         DirectoryUtils.Delete(System.IO.Path.Combine(ModuleDir, "data"))
                     Next
                 End If
             End If
         Next
+        If InitializeSources Then ClearMusicSourceUserProfileData()
         If InitializeCache Then ClearFrontendCaches(CacheRoots)
+    End Sub
+
+    Private Shared Sub DeleteKnownModuleLoginFiles(ModulesDir As String)
+        For Each RelativePath In {
+            "com.chillpatcher.qqmusic\data\qqmusic_cookie.json",
+            "com.chillpatcher.bilibili\data\bilibili_session.json",
+            "com.chillpatcher.spotify\data\spotify_session.json"
+        }
+            FileUtils.Delete(System.IO.Path.Combine(ModulesDir, RelativePath))
+        Next
+    End Sub
+
+    Private Shared Sub ClearMusicSourceUserProfileData()
+        DirectoryUtils.Delete(System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "go-musicfox"))
+
+        Dim WindowsDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows)
+        If Not String.IsNullOrWhiteSpace(WindowsDir) Then
+            DirectoryUtils.Delete(System.IO.Path.Combine(
+                WindowsDir,
+                "System32",
+                "config",
+                "systemprofile",
+                "AppData",
+                "Local",
+                "go-musicfox"))
+            DirectoryUtils.Delete(System.IO.Path.Combine(
+                WindowsDir,
+                "System32",
+                "config",
+                "systemprofile",
+                "AppData",
+                "Roaming",
+                "go-musicfox"))
+        End If
     End Sub
 
     Private Shared Sub DeleteMatchingFiles(DirectoryPath As String, Pattern As String)
@@ -3301,6 +3365,7 @@ Public Class PageOmniMixRight
             Dim HasExistingLibrary = CurrentLibraryPlaylist IsNot Nothing AndAlso (
                 If(CurrentLibraryPlaylist.Tags, New List(Of OmniMixTagInfo)).Count > 0 OrElse
                 If(CurrentLibraryPlaylist.Albums, New List(Of OmniMixAlbumInfo)).Count > 0 OrElse
+                If(CurrentLibraryPlaylist.Playlists, New List(Of OmniMixLibraryPlaylistInfo)).Count > 0 OrElse
                 If(CurrentLibraryPlaylist.Songs, New List(Of OmniMixSongInfo)).Count > 0)
             If Not HasIncomingLibrary AndAlso HasExistingLibrary Then Return
 
@@ -3327,6 +3392,7 @@ Public Class PageOmniMixRight
         Dim Playlist = If(CurrentLibraryPlaylist, New OmniMixPlaylistData)
         Dim Albums = If(Playlist.Albums, New List(Of OmniMixAlbumInfo))
         Dim Songs = If(Playlist.Songs, New List(Of OmniMixSongInfo))
+        Dim LibraryPlaylists = If(Playlist.Playlists, New List(Of OmniMixLibraryPlaylistInfo))
         Dim SelectedModuleId = If(CurrentLibraryPane, "")
         Dim HasSourceFilter = Not String.IsNullOrWhiteSpace(SelectedModuleId)
 
@@ -3343,7 +3409,18 @@ Public Class PageOmniMixRight
                       Return VisibleSongs.Any(Function(Song) String.Equals(Song.AlbumId, Album.Id, StringComparison.OrdinalIgnoreCase))
                   End Function).
             ToList()
-        Dim Groups = BuildLibraryAlbumGroups(VisibleAlbums, VisibleSongs)
+        Dim VisiblePlaylists = LibraryPlaylists.
+            Where(Function(Item) Not HasSourceFilter OrElse String.Equals(Item.ModuleId, SelectedModuleId, StringComparison.OrdinalIgnoreCase)).
+            ToList()
+        Dim Groups = BuildLibraryPlaylistGroups(VisiblePlaylists)
+        Dim PlaylistSongUuids As New HashSet(Of String)(
+            Groups.SelectMany(Function(Group) Group.Songs).
+                Select(Function(Song) If(Song.Uuid, "")).
+                Where(Function(Uuid) Not String.IsNullOrWhiteSpace(Uuid)),
+            StringComparer.OrdinalIgnoreCase)
+        Groups.AddRange(BuildLibraryAlbumGroups(
+            VisibleAlbums,
+            VisibleSongs.Where(Function(Song) String.IsNullOrWhiteSpace(Song.Uuid) OrElse Not PlaylistSongUuids.Contains(Song.Uuid)).ToList()))
 
         LabLibrarySummary.Text = $"{Groups.Count} 组，{VisibleSongs.Count} 首歌曲。"
 
@@ -3352,7 +3429,7 @@ Public Class PageOmniMixRight
             Return
         End If
 
-        For Each Group In Groups.OrderBy(Function(Item) Item.Name)
+        For Each Group In Groups
             AddLibraryAlbumItem(Group)
         Next
     End Sub
@@ -3380,6 +3457,21 @@ Public Class PageOmniMixRight
         Next
 
         Return Result
+    End Function
+
+    Private Shared Function BuildLibraryPlaylistGroups(Playlists As IEnumerable(Of OmniMixLibraryPlaylistInfo)) As List(Of LibraryAlbumGroup)
+        Return If(Playlists, Enumerable.Empty(Of OmniMixLibraryPlaylistInfo)).
+            Where(Function(Item) Item IsNot Nothing AndAlso Item.Songs IsNot Nothing AndAlso Item.Songs.Count > 0).
+            OrderBy(Function(Item) Item.SortOrder).
+            ThenBy(Function(Item) NonEmpty(Item.Name, Item.Id)).
+            Select(Function(Item) New LibraryAlbumGroup With {
+                .GroupId = "playlist_" & NonEmpty(Item.Id, Guid.NewGuid().ToString("N")),
+                .Name = NonEmpty(Item.Name, Item.Id),
+                .ModuleId = Item.ModuleId,
+                .CoverPath = Item.CoverPath,
+                .Songs = Item.Songs.ToList()
+            }).
+            ToList()
     End Function
 
     Private Sub AddLibraryItem(Title As String, Info As String, Level As Integer)

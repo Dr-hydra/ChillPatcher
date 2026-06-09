@@ -23,6 +23,16 @@ Public Class OmniMixPlaylistData
     Public Property Tags As List(Of OmniMixTagInfo) = New List(Of OmniMixTagInfo)
     Public Property Albums As List(Of OmniMixAlbumInfo) = New List(Of OmniMixAlbumInfo)
     Public Property Songs As List(Of OmniMixSongInfo) = New List(Of OmniMixSongInfo)
+    Public Property Playlists As List(Of OmniMixLibraryPlaylistInfo) = New List(Of OmniMixLibraryPlaylistInfo)
+End Class
+
+Public Class OmniMixLibraryPlaylistInfo
+    Public Property Id As String = ""
+    Public Property Name As String = ""
+    Public Property ModuleId As String = ""
+    Public Property CoverPath As String = ""
+    Public Property SortOrder As Integer
+    Public Property Songs As List(Of OmniMixSongInfo) = New List(Of OmniMixSongInfo)
 End Class
 
 Public Class OmniMixTagInfo
@@ -277,10 +287,37 @@ Public Module OmniMixApiClient
                 Dim TagsResponse = Await Library.QueryTagsAsync(New TagQuery())
                 Dim AlbumsResponse = Await Library.QueryAlbumsAsync(New AlbumQuery())
                 Dim TracksResponse = Await Library.QueryTracksAsync(New TrackQuery())
+                Dim PlaylistsResponse = Await Library.QueryPlaylistsAsync(New PlaylistQuery())
+                Dim LibraryPlaylists As New List(Of OmniMixLibraryPlaylistInfo)
+                For Each PlaylistInfo In PlaylistsResponse.Playlists
+                    Dim PlaylistWithEntries = Await Library.GetPlaylistWithEntriesAsync(New GetPlaylistWithEntriesRequest With {.PlaylistId = PlaylistInfo.Id})
+                    LibraryPlaylists.Add(New OmniMixLibraryPlaylistInfo With {
+                        .Id = PlaylistInfo.Id,
+                        .Name = PlaylistInfo.Name,
+                        .ModuleId = PlaylistInfo.ModuleId,
+                        .CoverPath = PlaylistInfo.CoverUri,
+                        .SortOrder = PlaylistInfo.SortOrder,
+                        .Songs = PlaylistWithEntries.Entries.
+                            OrderBy(Function(Entry) Entry.Position).
+                            Select(Function(Entry) New OmniMixSongInfo With {
+                                .Uuid = Entry.TrackUuid,
+                                .Title = Entry.Title,
+                                .Artist = Entry.Artist,
+                                .AlbumId = Entry.AlbumId,
+                                .Duration = Entry.Duration,
+                                .ModuleId = PlaylistInfo.ModuleId,
+                                .CoverPath = Entry.CoverUri,
+                                .CoverUrl = Entry.CoverUri,
+                                .ImageUrl = Entry.CoverUri
+                            }).
+                            ToList()
+                    })
+                Next
                 Return New OmniMixPlaylistData With {
                     .Tags = TagsResponse.Tags.Select(AddressOf MapTag).ToList(),
                     .Albums = AlbumsResponse.Albums.Select(AddressOf MapAlbum).ToList(),
-                    .Songs = TracksResponse.Tracks.Select(AddressOf MapSong).ToList()
+                    .Songs = TracksResponse.Tracks.Select(AddressOf MapSong).ToList(),
+                    .Playlists = LibraryPlaylists
                 }
             End Using
         Catch Ex As Exception When IsGrpcEndpointUnavailable(Ex)
