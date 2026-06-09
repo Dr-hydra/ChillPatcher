@@ -52,13 +52,13 @@ english.CleanupPageDescription=Choose data left by previous OmniMixPlayer instal
 english.CleanupPageSubCaption=All options are disabled by default. Only select data you explicitly want to remove.
 english.CleanupAudioCache=Clear rebuildable audio and image caches
 english.CleanupGuiSettings=Reset desktop GUI preferences (theme, volume, shortcuts, window position and saved game paths)
-english.CleanupBackendData=Reset backend configuration, music library and playback instances
+english.CleanupPreviousInstallDir=Delete the entire previous installation directory (removes its backend configuration, library and module data)
 english.CleanupLoginData=Remove music service sessions stored in default locations (NetEase, QQ Music, Bilibili and Spotify)
 english.CleanupIntegrationData=Remove game integration records, downloaded mod copies and backups (installed game mods remain, but automatic uninstall/restore may no longer work)
-english.CleanupConfirm=The selected cleanup options may remove settings, library data, login sessions or integration backups.%n%nThis operation cannot be undone. Continue?
+english.CleanupConfirm=The selected cleanup options may delete the entire previous installation directory, settings, login sessions or integration backups.%n%nThis operation cannot be undone. Continue?
 english.CleanupOldInstall=Previous backend directory detected:
 english.CleanupPreviousInstall=Previous installer directory detected:
-english.CleanupNoOldInstall=No previous backend directory was detected. Cleanup will apply to the selected installation directory and user profile data.
+english.CleanupNoOldInstall=No valid previous installation directory was detected. Directory deletion is unavailable; other cleanup options still apply to the selected installation directory and user profile data.
 english.CleanupLogPrefix=Optional cleanup:
 english.ServiceUpdateFailed=Failed to update the OmniMixPlayerBackend service path. Check the setup log or run the installer as administrator.
 chinesesimplified.CleanupPageTitle=可选清理
@@ -66,13 +66,13 @@ chinesesimplified.CleanupPageDescription=选择需要清理的旧版 OmniMixPlay
 chinesesimplified.CleanupPageSubCaption=所有选项默认不勾选。请只选择你明确需要删除的数据。
 chinesesimplified.CleanupAudioCache=清理可重新生成的音频与图片缓存
 chinesesimplified.CleanupGuiSettings=重置桌面 GUI 偏好（主题、音量、快捷键、窗口位置和已保存的游戏路径）
-chinesesimplified.CleanupBackendData=重置后端配置、曲库和播放实例
+chinesesimplified.CleanupPreviousInstallDir=完整删除原安装目录（包括其中的后端配置、曲库和模块数据）
 chinesesimplified.CleanupLoginData=删除默认位置中的音乐源登录状态（网易云、QQ 音乐、Bilibili 和 Spotify）
 chinesesimplified.CleanupIntegrationData=删除游戏集成记录、已下载的 Mod 副本和备份（不会卸载游戏中的 Mod，但之后可能无法自动卸载或恢复）
-chinesesimplified.CleanupConfirm=所选清理项可能删除设置、曲库、登录状态或游戏集成备份。%n%n此操作无法撤销，是否继续？
+chinesesimplified.CleanupConfirm=所选清理项可能完整删除原安装目录、设置、登录状态或游戏集成备份。%n%n此操作无法撤销，是否继续？
 chinesesimplified.CleanupOldInstall=检测到旧后端目录：
 chinesesimplified.CleanupPreviousInstall=检测到上一次安装目录：
-chinesesimplified.CleanupNoOldInstall=未检测到旧后端目录。清理将作用于当前选择的安装目录和用户配置目录。
+chinesesimplified.CleanupNoOldInstall=未检测到有效的原安装目录，无法使用完整目录删除；其他清理选项仍会作用于当前安装目录和用户配置目录。
 chinesesimplified.CleanupLogPrefix=可选清理：
 chinesesimplified.ServiceUpdateFailed=OmniMixPlayerBackend 服务路径更新失败。请检查安装日志，或以管理员身份重新运行安装程序。
 
@@ -214,9 +214,7 @@ begin
     (Length(Normalized) > 3) and
     (
       FileExists(AddBackslash(Normalized) + '{#MyAppBackendName}') or
-      FileExists(AddBackslash(Normalized) + '{#MyAppExeName}') or
-      DirExists(AddBackslash(Normalized) + 'config') or
-      DirExists(AddBackslash(Normalized) + 'modules')
+      FileExists(AddBackslash(Normalized) + '{#MyAppExeName}')
     );
 end;
 
@@ -248,6 +246,21 @@ begin
   DeleteTreeLogged(Path);
 end;
 
+procedure DeletePreviousInstallDir(const BaseDir: string);
+var
+  Normalized: string;
+begin
+  Normalized := StripTrailingSlash(BaseDir);
+  if not IsKnownInstallDir(Normalized) then
+  begin
+    if Normalized <> '' then
+      Log(CustomMessage('CleanupLogPrefix') + ' refused unrecognized installation directory ' + Normalized);
+    Exit;
+  end;
+
+  DeleteTreeLogged(Normalized);
+end;
+
 procedure CleanupInstallLocation(const BaseDir: string);
 var
   ModulesDir: string;
@@ -263,9 +276,6 @@ begin
     DeleteTreeLogged(ModulesDir + 'com.chillpatcher.spotify\data\librespot-cache');
   end;
 
-  if CleanupPage.Values[2] then
-    DeleteTreeLogged(AddBackslash(StripTrailingSlash(BaseDir)) + 'config');
-
   if CleanupPage.Values[3] then
   begin
     DeleteFileLogged(ModulesDir + 'com.chillpatcher.qqmusic\data\qqmusic_cookie.json');
@@ -280,6 +290,13 @@ var
   GuiDataDir: string;
 begin
   CurrentInstallDir := StripTrailingSlash(WizardDirValue());
+
+  if CleanupPage.Values[2] then
+  begin
+    DeletePreviousInstallDir(OldServiceDir);
+    if CompareText(PreviousInstallDir, OldServiceDir) <> 0 then
+      DeletePreviousInstallDir(PreviousInstallDir);
+  end;
 
   CleanupInstallLocation(OldServiceDir);
   if CompareText(PreviousInstallDir, OldServiceDir) <> 0 then
@@ -309,12 +326,16 @@ end;
 procedure InitializeWizard();
 var
   PageSubCaption: string;
+  CanDeletePreviousInstall: Boolean;
 begin
   CleanupConfirmed := False;
   OldServiceDir := ReadServiceInstallDir();
   PreviousInstallDir := ReadRegisteredInstallDir();
+  CanDeletePreviousInstall :=
+    IsKnownInstallDir(OldServiceDir) or
+    IsKnownInstallDir(PreviousInstallDir);
 
-  if (OldServiceDir <> '') or (PreviousInstallDir <> '') then
+  if CanDeletePreviousInstall then
   begin
     PageSubCaption := CustomMessage('CleanupPageSubCaption');
     if OldServiceDir <> '' then
@@ -342,9 +363,10 @@ begin
   );
   CleanupPage.Add(CustomMessage('CleanupAudioCache'));
   CleanupPage.Add(CustomMessage('CleanupGuiSettings'));
-  CleanupPage.Add(CustomMessage('CleanupBackendData'));
+  CleanupPage.Add(CustomMessage('CleanupPreviousInstallDir'));
   CleanupPage.Add(CustomMessage('CleanupLoginData'));
   CleanupPage.Add(CustomMessage('CleanupIntegrationData'));
+  CleanupPage.CheckListBox.ItemEnabled[2] := CanDeletePreviousInstall;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
