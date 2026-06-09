@@ -26,9 +26,10 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
-; Uncomment the following line to run in non administrative install mode (install for current user only).
-;PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+DisableDirPage=no
+UsePreviousAppDir=yes
+; Windows service installation and migration require elevation.
+PrivilegesRequired=admin
 OutputDir=G:/Csharp/Chill/release
 OutputBaseFilename=OmniMixPlayer_V3.0.2_installer
 Compression=lzma2/ultra64
@@ -56,8 +57,10 @@ english.CleanupLoginData=Remove music service sessions stored in default locatio
 english.CleanupIntegrationData=Remove game integration records, downloaded mod copies and backups (installed game mods remain, but automatic uninstall/restore may no longer work)
 english.CleanupConfirm=The selected cleanup options may remove settings, library data, login sessions or integration backups.%n%nThis operation cannot be undone. Continue?
 english.CleanupOldInstall=Previous backend directory detected:
+english.CleanupPreviousInstall=Previous installer directory detected:
 english.CleanupNoOldInstall=No previous backend directory was detected. Cleanup will apply to the selected installation directory and user profile data.
 english.CleanupLogPrefix=Optional cleanup:
+english.ServiceUpdateFailed=Failed to update the OmniMixPlayerBackend service path. Check the setup log or run the installer as administrator.
 chinesesimplified.CleanupPageTitle=可选清理
 chinesesimplified.CleanupPageDescription=选择需要清理的旧版 OmniMixPlayer 数据
 chinesesimplified.CleanupPageSubCaption=所有选项默认不勾选。请只选择你明确需要删除的数据。
@@ -68,8 +71,10 @@ chinesesimplified.CleanupLoginData=删除默认位置中的音乐源登录状态
 chinesesimplified.CleanupIntegrationData=删除游戏集成记录、已下载的 Mod 副本和备份（不会卸载游戏中的 Mod，但之后可能无法自动卸载或恢复）
 chinesesimplified.CleanupConfirm=所选清理项可能删除设置、曲库、登录状态或游戏集成备份。%n%n此操作无法撤销，是否继续？
 chinesesimplified.CleanupOldInstall=检测到旧后端目录：
+chinesesimplified.CleanupPreviousInstall=检测到上一次安装目录：
 chinesesimplified.CleanupNoOldInstall=未检测到旧后端目录。清理将作用于当前选择的安装目录和用户配置目录。
 chinesesimplified.CleanupLogPrefix=可选清理：
+chinesesimplified.ServiceUpdateFailed=OmniMixPlayerBackend 服务路径更新失败。请检查安装日志，或以管理员身份重新运行安装程序。
 
 [Files]
 ; ═══ 所有可执行文件和 DLL (排除 VC 运行库，它单独处理) ═══
@@ -122,12 +127,13 @@ Filename: "sc.exe"; Parameters: "delete {#MyServiceName}"; Flags: runhidden; Run
 
 var
   CleanupPage: TInputOptionWizardPage;
-  OldInstallDir: string;
+  OldServiceDir: string;
+  PreviousInstallDir: string;
   CleanupConfirmed: Boolean;
 
 const
   ServiceRegistryPath = 'SYSTEM\CurrentControlSet\Services\{#MyServiceName}';
-  UninstallRegistryPath = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}_is1';
+  UninstallRegistryPath = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}}_is1';
 
 // ── 字符串和路径辅助函数 ──
 function StripTrailingSlash(Value: string): string;
@@ -275,8 +281,11 @@ var
 begin
   CurrentInstallDir := StripTrailingSlash(WizardDirValue());
 
-  CleanupInstallLocation(OldInstallDir);
-  if CompareText(OldInstallDir, CurrentInstallDir) <> 0 then
+  CleanupInstallLocation(OldServiceDir);
+  if CompareText(PreviousInstallDir, OldServiceDir) <> 0 then
+    CleanupInstallLocation(PreviousInstallDir);
+  if (CompareText(CurrentInstallDir, OldServiceDir) <> 0) and
+     (CompareText(CurrentInstallDir, PreviousInstallDir) <> 0) then
     CleanupInstallLocation(CurrentInstallDir);
 
   GuiDataDir := ExpandConstant('{userappdata}\com.omnimixplayer\omnimix_gui');
@@ -291,7 +300,7 @@ begin
     DeleteFileLogged(AddBackslash(GuiDataDir) + 'shared_preferences.json');
 
   if CleanupPage.Values[3] then
-    DeleteFileOrTreeLogged(ExpandConstant('{localappdata}\go-musicfox\cookie'));
+    DeleteTreeLogged(ExpandConstant('{localappdata}\go-musicfox'));
 
   if CleanupPage.Values[4] then
     DeleteTreeLogged(ExpandConstant('{localappdata}\OmniMixPlayer\mod_manager'));
@@ -302,14 +311,22 @@ var
   PageSubCaption: string;
 begin
   CleanupConfirmed := False;
-  OldInstallDir := ReadServiceInstallDir();
-  if OldInstallDir = '' then
-    OldInstallDir := ReadRegisteredInstallDir();
+  OldServiceDir := ReadServiceInstallDir();
+  PreviousInstallDir := ReadRegisteredInstallDir();
 
-  if OldInstallDir <> '' then
-    PageSubCaption :=
-      CustomMessage('CleanupPageSubCaption') + #13#10 + #13#10 +
-      CustomMessage('CleanupOldInstall') + #13#10 + OldInstallDir
+  if (OldServiceDir <> '') or (PreviousInstallDir <> '') then
+  begin
+    PageSubCaption := CustomMessage('CleanupPageSubCaption');
+    if OldServiceDir <> '' then
+      PageSubCaption :=
+        PageSubCaption + #13#10 + #13#10 +
+        CustomMessage('CleanupOldInstall') + #13#10 + OldServiceDir;
+    if (PreviousInstallDir <> '') and
+       (CompareText(PreviousInstallDir, OldServiceDir) <> 0) then
+      PageSubCaption :=
+        PageSubCaption + #13#10 + #13#10 +
+        CustomMessage('CleanupPreviousInstall') + #13#10 + PreviousInstallDir;
+  end
   else
     PageSubCaption :=
       CustomMessage('CleanupPageSubCaption') + #13#10 + #13#10 +
@@ -405,20 +422,24 @@ begin
 end;
 
 // ── 检查并停止服务 ──
-function StopAndRemoveService(ServiceName: string): Boolean;
+function StopService(ServiceName: string): Boolean;
 var
   ResultCode: Integer;
 begin
   Result := True;
-  
-  // 停止服务
+
   if ServiceExists(ServiceName) then
   begin
-    Exec('sc.exe', 'stop "' + ServiceName + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    // 等待服务停止（最多等 30 秒）
-    Sleep(3000);
-    // 删除服务，安装后会重新创建
-    Exec('sc.exe', 'delete "' + ServiceName + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Result :=
+      Exec(
+        'sc.exe',
+        'stop "' + ServiceName + '"',
+        '',
+        SW_HIDE,
+        ewWaitUntilTerminated,
+        ResultCode
+      ) and ((ResultCode = 0) or (ResultCode = 1062));
+    Sleep(1500);
   end;
 end;
 
@@ -459,7 +480,8 @@ begin
   if ServiceExists('{#MyServiceName}') then
   begin
     Log('检测到 {#MyServiceName} 服务正在运行，正在停止...');
-    StopAndRemoveService('{#MyServiceName}');
+    if not StopService('{#MyServiceName}') then
+      Log('警告：停止 {#MyServiceName} 服务失败，将继续终止后端进程');
   end;
 
   // 2. 终止 GUI 进程
@@ -483,30 +505,62 @@ begin
   RunOptionalCleanup();
 end;
 
-// ── 安装完成后重新创建服务 ──
+// ── 安装完成后创建或更新服务 ──
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
   BackendPath: string;
+  ServiceUpdated: Boolean;
 begin
   if CurStep = ssPostInstall then
   begin
-    BackendPath := ExpandConstant('"{app}\{#MyAppBackendName}"');
-    
-    // 重新创建 Windows 服务 (手动启动)
-    if Exec('sc.exe', 'create {#MyServiceName} binPath= ' + BackendPath + ' start= demand',
-           '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    BackendPath := ExpandConstant('{app}\{#MyAppBackendName}');
+
+    if ServiceExists('{#MyServiceName}') then
     begin
-      Log('服务 {#MyServiceName} 创建成功');
-      
+      ServiceUpdated :=
+        Exec(
+          'sc.exe',
+          'config "{#MyServiceName}" binPath= "' + BackendPath + '" start= demand',
+          '',
+          SW_HIDE,
+          ewWaitUntilTerminated,
+          ResultCode
+        ) and (ResultCode = 0);
+      if ServiceUpdated then
+        Log('服务 {#MyServiceName} 已更新到新路径：' + BackendPath);
+    end
+    else
+    begin
+      ServiceUpdated :=
+        Exec(
+          'sc.exe',
+          'create "{#MyServiceName}" binPath= "' + BackendPath + '" start= demand',
+          '',
+          SW_HIDE,
+          ewWaitUntilTerminated,
+          ResultCode
+        ) and (ResultCode = 0);
+      if ServiceUpdated then
+        Log('服务 {#MyServiceName} 创建成功：' + BackendPath);
+    end;
+
+    if ServiceUpdated then
+    begin
       // 配置 DACL：允许 Authenticated Users (AU) 无提权启停服务
       Exec('sc.exe', 'sdset {#MyServiceName} D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)(A;;CCDCRPWP;;;AU)',
           '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      
       Log('服务 DACL 配置完成');
     end
     else
-      Log('警告：服务 {#MyServiceName} 创建失败，请检查权限');
+    begin
+      Log('错误：服务 {#MyServiceName} 创建或更新失败，错误代码：' + IntToStr(ResultCode));
+      MsgBox(
+        CustomMessage('ServiceUpdateFailed'),
+        mbError,
+        MB_OK
+      );
+    end;
   end;
 end;
 
