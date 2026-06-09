@@ -1,6 +1,7 @@
 ﻿bin/
 obj/
 release/
+artifacts/
 packages/
 build/
 target/
