@@ -201,7 +201,7 @@ Public Class PageOmniMixLeft
             BtnLeftPlaybackPrev.IsEnabled = True
             BtnLeftPlaybackToggle.IsEnabled = True
             BtnLeftPlaybackNext.IsEnabled = True
-            SliderLeftVolume.IsEnabled = CanControlActiveInstance
+            SliderLeftVolume.IsEnabled = ActiveInstance IsNot Nothing
             SliderLeftLatency.IsEnabled = CanControlActiveInstance
         Finally
             IsUpdatingPlaybackUi = False
@@ -364,7 +364,7 @@ Public Class PageOmniMixLeft
     End Function
 
     Private Async Function SendPlaybackCommandAsync(Command As String) As Task
-        If Not CanControlActiveInstance OrElse String.IsNullOrWhiteSpace(CurrentBaseUrl) OrElse String.IsNullOrWhiteSpace(ActiveInstanceId) Then Return
+        If String.IsNullOrWhiteSpace(CurrentBaseUrl) OrElse String.IsNullOrWhiteSpace(ActiveInstanceId) Then Return
         Try
             Await OmniMixApiClient.SendInstanceCommandAsync(CurrentBaseUrl, ActiveInstanceId, Command)
             RefreshPlayerAsync()
@@ -372,6 +372,10 @@ Public Class PageOmniMixLeft
             Hint("播放控制失败：" & Ex.Message, HintType.Red)
         End Try
     End Function
+
+    Public Async Sub HandleMediaCommand(Command As String)
+        Await SendPlaybackCommandAsync(Command)
+    End Sub
 
     Private Async Sub BtnLeftPlaybackPrev_Click(sender As Object, e As EventArgs) Handles BtnLeftPlaybackPrev.Click
         Await SendPlaybackCommandAsync("prev")
@@ -604,7 +608,7 @@ Public Class PageOmniMixLeft
         CurrentRight.SetModulesPane(sender.Tag.ToString())
     End Sub
 
-    Private Sub SettingsNav_Check(sender As FrameworkElement, e As RouteEventArgs) Handles ItemSettingsConfig.Check, ItemSettingsPersonalization.Check, ItemSettingsInstances.Check, ItemSettingsEqualizer.Check, ItemSettingsArchives.Check
+    Private Sub SettingsNav_Check(sender As FrameworkElement, e As RouteEventArgs) Handles ItemSettingsConfig.Check, ItemSettingsPersonalization.Check, ItemSettingsMaintenance.Check, ItemSettingsInstances.Check, ItemSettingsEqualizer.Check, ItemSettingsArchives.Check
         If CurrentRight Is Nothing OrElse sender.Tag Is Nothing Then Return
         CurrentRight.SetSettingsPane(sender.Tag.ToString())
     End Sub

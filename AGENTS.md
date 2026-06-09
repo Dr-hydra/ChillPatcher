@@ -59,6 +59,11 @@ This repository is the VB.NET/WPF compatible frontend for OmniMix. Treat it as a
 - For future VB.NET integration work, prefer studying the Flutter Windows SDK integration instead of hand-writing duplicate compatible API implementations.
 - The SDK route should reduce drift because API endpoints and backend control are centralized upstream.
 - The Web client may use native Dart HTTP/WebSocket API calls, but the desktop frontend should favor the SDK-style approach when practical.
+- The VB.NET frontend now references `OmniMixPlayer.SDK` and uses `.NET` gRPC-Web clients for core library, playback, queue/history, equalizer, instance, archive, and profile operations.
+- Upstream `v3.0` removed the older profile playback mode/queue fields and moved queue-like state into `PlaybackTimelineState`; keep `OmniMixApiClient` as the compatibility adapter between existing WPF page code and the SDK timeline model.
+- Treat `InstanceProfile.Capabilities.ServerControlledPlayback` as the current SDK-side signal for server-managed playback behavior when the UI needs to infer the legacy mode string.
+- Keep REST calls only for upstream surfaces that are not currently covered by the SDK, such as backend config, backend stop, module enablement, and module UI/link/settings endpoints.
+- Preserve the existing `OmniMixApiClient` public method signatures when possible so page-level WPF code does not need to know whether a call is backed by SDK/gRPC or REST.
 
 ## Compatibility Model
 
@@ -70,6 +75,9 @@ This repository is the VB.NET/WPF compatible frontend for OmniMix. Treat it as a
 
 - Use `rg`/`rg --files` first when searching the repository.
 - Keep edits scoped to the frontend unless the user explicitly asks for backend changes.
+- Upstream `v3.0` moved build orchestration into `scripts/build_tree.py`; this repository keeps `scripts/build_all.py` as a command-line compatibility wrapper for old `build.cmd` flows and for publishing the VB.NET frontend into `playerbuild/`.
+- Use `python scripts/build_all.py player --skip-flutter` to build the full backend/modules package while replacing the desktop Flutter GUI with `OmniMixPlayer.Gui.Vbnet.exe`.
+- When `--skip-flutter` is used, the wrapper disables only the Flutter desktop copy step during `playerbuild` assembly; do not remove backend `wwwroot/` web assets.
 - Before release work, check the current GitHub Release assets and upstream Release asset digest.
 - Avoid deleting or rewriting generated/upstream package contents unless the release task specifically requires that replacement.
 

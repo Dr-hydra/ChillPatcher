@@ -180,6 +180,7 @@ Public Class PageOmniMixRight
 
         Dim ShowConfig = String.Equals(CurrentSettingsPane, "config", StringComparison.OrdinalIgnoreCase)
         Dim ShowPersonalization = String.Equals(CurrentSettingsPane, "personalization", StringComparison.OrdinalIgnoreCase)
+        Dim ShowMaintenance = String.Equals(CurrentSettingsPane, "maintenance", StringComparison.OrdinalIgnoreCase)
         Dim ShowInstances = String.Equals(CurrentSettingsPane, "instances", StringComparison.OrdinalIgnoreCase)
         Dim ShowArchives = String.Equals(CurrentSettingsPane, "archives", StringComparison.OrdinalIgnoreCase)
         Dim ShowEqualizer = String.Equals(CurrentSettingsPane, "equalizer", StringComparison.OrdinalIgnoreCase)
@@ -192,6 +193,8 @@ Public Class PageOmniMixRight
             CardSettings.Title = "设置 - 均衡器"
         ElseIf ShowPersonalization Then
             CardSettings.Title = "设置 - 个性化"
+        ElseIf ShowMaintenance Then
+            CardSettings.Title = "设置 - 初始化与缓存"
         Else
             CardSettings.Title = "设置 - 后端配置"
         End If
@@ -201,6 +204,7 @@ Public Class PageOmniMixRight
         PanSettingsConfigButtons.Visibility = If(ShowConfig, Visibility.Visible, Visibility.Collapsed)
         PanSettingsService.Visibility = Visibility.Collapsed
         PanSettingsPersonalization.Visibility = If(ShowPersonalization, Visibility.Visible, Visibility.Collapsed)
+        PanSettingsMaintenance.Visibility = If(ShowMaintenance, Visibility.Visible, Visibility.Collapsed)
         PanSettingsEqualizer.Visibility = If(ShowEqualizer, Visibility.Visible, Visibility.Collapsed)
         LabInstanceStats.Visibility = If(ShowInstances, Visibility.Visible, Visibility.Collapsed)
         PanSettingsInstances.Visibility = If(ShowInstances, Visibility.Visible, Visibility.Collapsed)
@@ -208,7 +212,12 @@ Public Class PageOmniMixRight
         BtnArchivesRefresh.Visibility = If(ShowArchives, Visibility.Visible, Visibility.Collapsed)
         PanSettingsArchives.Visibility = If(ShowArchives, Visibility.Visible, Visibility.Collapsed)
 
-        If ShowEqualizer Then
+        If ShowPersonalization Then
+            SettingService.RefreshSettings(PanSettingsPersonalization)
+        ElseIf ShowMaintenance Then
+            RefreshCachePathText()
+            Await RefreshCacheSizeAsync()
+        ElseIf ShowEqualizer Then
             If String.IsNullOrWhiteSpace(CurrentBaseUrl) Then
                 LabEqualizerSummary.Text = "等待连接后端后读取均衡器。"
                 PanEqualizerPresets.Children.Clear()
@@ -629,6 +638,208 @@ Public Class PageOmniMixRight
             TxtBackendPath.Text = Dialog.FileName
         End Using
     End Sub
+
+    Private Async Sub BtnClearFrontendCache_Click(sender As Object, e As EventArgs) Handles BtnClearFrontendCache.Click
+        If MyMsgBox("确定要清理前端缓存吗？曲库数据库、模块数据和设置不会被删除。", "清理缓存", "清理", "取消") <> 1 Then Return
+
+        BtnClearFrontendCache.IsEnabled = False
+        Try
+            Await Task.Run(AddressOf ClearFrontendCache)
+            Hint("前端缓存已清理。", HintType.Green)
+            Await RefreshCacheSizeAsync()
+        Catch Ex As Exception
+            Logger.Warn(Ex, "清理前端缓存失败")
+            Hint("缓存清理失败：" & Ex.Message, HintType.Red)
+        Finally
+            BtnClearFrontendCache.IsEnabled = True
+        End Try
+    End Sub
+
+    Private Async Sub BtnRefreshCacheSize_Click(sender As Object, e As EventArgs) Handles BtnRefreshCacheSize.Click
+        Await RefreshCacheSizeAsync()
+    End Sub
+
+    Private Sub BtnBrowseCachePath_Click(sender As Object, e As EventArgs) Handles BtnBrowseCachePath.Click
+        Using Dialog As New System.Windows.Forms.FolderBrowserDialog()
+            Dialog.Description = "选择 OmniMix 前端缓存文件夹"
+            Dialog.ShowNewFolderButton = True
+            Dim CurrentPath = TxtCachePath.Text.Trim()
+            If Directory.Exists(CurrentPath) Then Dialog.SelectedPath = CurrentPath
+            If Dialog.ShowDialog() = System.Windows.Forms.DialogResult.OK Then TxtCachePath.Text = Dialog.SelectedPath
+        End Using
+    End Sub
+
+    Private Async Sub BtnApplyCachePath_Click(sender As Object, e As EventArgs) Handles BtnApplyCachePath.Click
+        Dim SelectedPath = TxtCachePath.Text.Trim()
+        If String.IsNullOrWhiteSpace(SelectedPath) Then
+            Hint("请选择缓存文件夹，或点击恢复默认。", HintType.Blue)
+            Return
+        End If
+        Try
+            SelectedPath = System.IO.Path.GetFullPath(SelectedPath).TrimEnd("\"c, "/"c) & "\"
+            Directory.CreateDirectory(SelectedPath)
+            CheckPermissionWithException(SelectedPath)
+            Settings.Set("SystemSystemCache", SelectedPath)
+            PathTemp = SelectedPath
+            Directory.CreateDirectory(System.IO.Path.Combine(PathTemp, "Cache", "Http"))
+            RefreshCachePathText()
+            Await RefreshCacheSizeAsync()
+            Hint("缓存文件夹已更新。", HintType.Green)
+        Catch Ex As Exception
+            Logger.Warn(Ex, "更新缓存文件夹失败")
+            Hint("缓存文件夹不可用：" & Ex.Message, HintType.Red)
+        End Try
+    End Sub
+
+    Private Async Sub BtnResetCachePath_Click(sender As Object, e As EventArgs) Handles BtnResetCachePath.Click
+        Settings.Reset("SystemSystemCache")
+        PathTemp = System.IO.Path.GetTempPath().TrimEnd("\"c, "/"c) & "\OmniMixPlayer\"
+        Directory.CreateDirectory(System.IO.Path.Combine(PathTemp, "Cache", "Http"))
+        RefreshCachePathText()
+        Await RefreshCacheSizeAsync()
+        Hint("已恢复系统默认缓存文件夹。", HintType.Green)
+    End Sub
+
+    Private Sub RefreshCachePathText()
+        Dim ConfiguredPath = Settings.Get(Of String)("SystemSystemCache")
+        TxtCachePath.Text = If(String.IsNullOrWhiteSpace(ConfiguredPath), PathTemp, ConfiguredPath)
+        TxtCachePath.HintText = System.IO.Path.GetTempPath().TrimEnd("\"c, "/"c) & "\OmniMixPlayer\"
+    End Sub
+
+    Private Async Sub BtnInitializeSelected_Click(sender As Object, e As EventArgs) Handles BtnInitializeSelected.Click
+        Dim InitializeSettings = CheckInitializeFrontendSettings.Checked
+        Dim InitializeBackend = CheckInitializeBackendConfig.Checked
+        Dim InitializeLibrary = CheckInitializeLibrary.Checked
+        Dim InitializeSources = CheckInitializeMusicSources.Checked
+        Dim InitializeCache = CheckInitializeCache.Checked
+        If Not InitializeSettings AndAlso Not InitializeBackend AndAlso Not InitializeLibrary AndAlso Not InitializeSources AndAlso Not InitializeCache Then
+            Hint("请至少选择一项初始化范围。", HintType.Blue)
+            Return
+        End If
+
+        Dim Scope As New List(Of String)
+        If InitializeSettings Then Scope.Add("前端设置")
+        If InitializeBackend Then Scope.Add("后端配置、实例与历史")
+        If InitializeLibrary Then Scope.Add("全部曲库")
+        If InitializeSources Then Scope.Add("音乐源登录与模块数据")
+        If InitializeCache Then Scope.Add("前端缓存")
+        Dim Prompt = "确定要初始化以下内容吗？" & vbCrLf & String.Join("、", Scope) & vbCrLf & vbCrLf &
+                     "此操作不可撤销；游戏集成安装状态会保留。"
+        If MyMsgBox(Prompt, "初始化所选内容", "初始化", "取消", IsWarn:=True) <> 1 Then Return
+
+        BtnInitializeSelected.IsEnabled = False
+        Try
+            If InitializeBackend OrElse InitializeLibrary OrElse InitializeSources Then Await StopBackendForInitializationAsync()
+            If InitializeSettings Then
+                For Each Key In Settings.Entries.Keys.ToList()
+                    Settings.Reset(Key)
+                Next
+                PathTemp = System.IO.Path.GetTempPath().TrimEnd("\"c, "/"c) & "\OmniMixPlayer\"
+            End If
+            Await Task.Run(Sub() InitializeSelectedData(InitializeBackend, InitializeLibrary, InitializeSources, InitializeCache))
+
+            CurrentBaseUrl = ""
+            HasCheckedBackend = False
+            CurrentLibraryPlaylist = New OmniMixPlaylistData()
+            CurrentLibraryTagSongs.Clear()
+            CurrentModules.Clear()
+            ExpandedLibraryAlbums.Clear()
+            SettingService.RefreshSettings(PanSettingsPersonalization)
+            If FrmMain IsNot Nothing Then FrmMain.UpdateBackgroundAndTitleBar()
+            RefreshCachePathText()
+            Await RefreshCacheSizeAsync()
+            Hint("所选内容已初始化，游戏集成安装状态已保留。", HintType.Green)
+        Catch Ex As Exception
+            Logger.Warn(Ex, "初始化所选内容失败")
+            Hint("初始化失败：" & Ex.Message, HintType.Red)
+        Finally
+            BtnInitializeSelected.IsEnabled = True
+        End Try
+    End Sub
+
+    Private Async Function StopBackendForInitializationAsync() As Task
+        If Not String.IsNullOrWhiteSpace(CurrentBaseUrl) Then
+            Try
+                Await OmniMixApiClient.StopBackendAsync(CurrentBaseUrl)
+            Catch Ex As Exception
+                Logger.Warn(Ex, "初始化前通过 API 停止后端失败")
+            End Try
+        End If
+        If Await OmniMixPlatformService.GetServiceStateAsync() = OmniMixServiceState.Running Then
+            Await OmniMixPlatformService.StopServiceAsync()
+        End If
+        Await Task.Delay(1000)
+    End Function
+
+    Private Sub InitializeSelectedData(InitializeBackend As Boolean, InitializeLibrary As Boolean, InitializeSources As Boolean, InitializeCache As Boolean)
+        Dim BackendPath = OmniMixBackendManager.FindBackendExe()
+        Dim BackendRoot = If(String.IsNullOrWhiteSpace(BackendPath), PathExeFolder, System.IO.Path.GetDirectoryName(BackendPath))
+        Dim ConfigDir = System.IO.Path.Combine(BackendRoot, "config")
+
+        If InitializeBackend Then
+            DeleteMatchingFiles(ConfigDir, "global_config.json")
+            DeleteMatchingFiles(ConfigDir, "omnimix_instances*.db")
+        End If
+        If InitializeLibrary Then
+            DeleteMatchingFiles(ConfigDir, "omnimix_library*.db")
+            Dim LocalFolderData = System.IO.Path.Combine(BackendRoot, "modules", "com.chillpatcher.localfolder", "data")
+            DirectoryUtils.Delete(LocalFolderData)
+        End If
+        If InitializeSources Then
+            If Directory.Exists(ConfigDir) Then
+                For Each ConfigFile In Directory.GetFiles(ConfigDir, "*.json")
+                    If Not String.Equals(System.IO.Path.GetFileName(ConfigFile), "global_config.json", StringComparison.OrdinalIgnoreCase) Then FileUtils.Delete(ConfigFile)
+                Next
+            End If
+            Dim ModulesDir = System.IO.Path.Combine(BackendRoot, "modules")
+            If Directory.Exists(ModulesDir) Then
+                For Each ModuleDir In Directory.GetDirectories(ModulesDir)
+                    DirectoryUtils.Delete(System.IO.Path.Combine(ModuleDir, "data"))
+                Next
+            End If
+        End If
+        If InitializeCache Then ClearFrontendCache()
+    End Sub
+
+    Private Shared Sub DeleteMatchingFiles(DirectoryPath As String, Pattern As String)
+        If Not Directory.Exists(DirectoryPath) Then Return
+        For Each FilePath In Directory.GetFiles(DirectoryPath, Pattern)
+            FileUtils.Delete(FilePath)
+        Next
+    End Sub
+
+    Private Shared Sub ClearFrontendCache()
+        For Each CacheName In {"Cache", "Download", "TaskTemp", "MyImage"}
+            DirectoryUtils.Delete(System.IO.Path.Combine(PathTemp, CacheName))
+        Next
+        Directory.CreateDirectory(System.IO.Path.Combine(PathTemp, "Cache", "Http"))
+    End Sub
+
+    Private Async Function RefreshCacheSizeAsync() As Task
+        LabCacheSummary.Text = "正在统计缓存大小..."
+        Try
+            Dim Size = Await Task.Run(Function() GetFrontendCacheSize())
+            LabCacheSummary.Text = "当前前端缓存：" & FormatFileSize(Size) & "。统计范围包含网络缓存、下载临时文件、任务临时文件和图片缓存。"
+        Catch Ex As Exception
+            Logger.Warn(Ex, "统计前端缓存大小失败")
+            LabCacheSummary.Text = "缓存大小统计失败：" & Ex.Message
+        End Try
+    End Function
+
+    Private Shared Function GetFrontendCacheSize() As Long
+        Dim Total As Long = 0
+        For Each CacheName In {"Cache", "Download", "TaskTemp", "MyImage"}
+            Dim CachePath = System.IO.Path.Combine(PathTemp, CacheName)
+            If Not Directory.Exists(CachePath) Then Continue For
+            Try
+                For Each Info In New DirectoryInfo(CachePath).EnumerateFiles("*", SearchOption.AllDirectories)
+                    Total += Info.Length
+                Next
+            Catch
+            End Try
+        Next
+        Return Total
+    End Function
 
     Private Async Sub BtnBackendPathReset_Click(sender As Object, e As EventArgs) Handles BtnBackendPathReset.Click
         OmniMixBackendManager.SetConfiguredBackendPath("")
@@ -1653,7 +1864,7 @@ Public Class PageOmniMixRight
             BtnPlaybackPrev.IsEnabled = CanControl
             BtnPlaybackToggle.IsEnabled = CanControl
             BtnPlaybackNext.IsEnabled = CanControl
-            SliderVolume.IsEnabled = CanControl
+            SliderVolume.IsEnabled = ActiveInstance IsNot Nothing
 
             If ActiveInstance Is Nothing Then
                 CanControlActiveInstance = False
@@ -3219,17 +3430,24 @@ Public Class PageOmniMixRight
     Private Function BuildLibraryAlbumGroups(Albums As List(Of OmniMixAlbumInfo), Songs As List(Of OmniMixSongInfo)) As List(Of LibraryAlbumGroup)
         Dim Groups As New List(Of LibraryAlbumGroup)
         Dim UsedSongUuids As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+        Dim SingleSongsByModule As New Dictionary(Of String, List(Of OmniMixSongInfo))(StringComparer.OrdinalIgnoreCase)
 
         For Each AlbumInfo In If(Albums, New List(Of OmniMixAlbumInfo))
             Dim AlbumSongs = If(Songs, New List(Of OmniMixSongInfo)).
                 Where(Function(Song) String.Equals(Song.AlbumId, AlbumInfo.Id, StringComparison.OrdinalIgnoreCase)).
                 OrderBy(Function(Song) NonEmpty(Song.Title, Song.Uuid)).
                 ToList()
+            If AlbumSongs.Count = 0 AndAlso AlbumInfo.SongCount <= 0 Then Continue For
+
             For Each SongInfo In AlbumSongs
                 If Not String.IsNullOrWhiteSpace(SongInfo.Uuid) Then UsedSongUuids.Add(SongInfo.Uuid)
             Next
 
-            If AlbumSongs.Count = 0 AndAlso AlbumInfo.SongCount <= 0 Then Continue For
+            If AlbumSongs.Count = 1 Then
+                AddSingleLibrarySong(SingleSongsByModule, NonEmpty(AlbumInfo.ModuleId, AlbumSongs(0).ModuleId), AlbumSongs(0))
+                Continue For
+            End If
+
             Groups.Add(New LibraryAlbumGroup With {
                 .GroupId = "album_" & NonEmpty(AlbumInfo.Id, Guid.NewGuid().ToString("N")),
                 .Name = NonEmpty(AlbumInfo.Name, AlbumInfo.Id),
@@ -3243,6 +3461,16 @@ Public Class PageOmniMixRight
             Where(Function(Song) String.IsNullOrWhiteSpace(Song.Uuid) OrElse Not UsedSongUuids.Contains(Song.Uuid)).
             OrderBy(Function(Song) NonEmpty(Song.Title, Song.Uuid)).
             ToList()
+        For Each Entry In SingleSongsByModule
+            If Entry.Value.Count = 0 Then Continue For
+            Groups.Add(New LibraryAlbumGroup With {
+                .GroupId = "singles_" & NonEmpty(Entry.Key, "unknown"),
+                .Name = "单曲",
+                .ModuleId = Entry.Key,
+                .CoverPath = Entry.Value.Select(Function(Song) NonEmpty(Song.CoverPath, Song.CoverUrl)).FirstOrDefault(Function(Cover) Not String.IsNullOrWhiteSpace(Cover)),
+                .Songs = Entry.Value.OrderBy(Function(Song) NonEmpty(Song.Title, Song.Uuid)).ToList()
+            })
+        Next
         If LooseSongs.Count > 0 Then
             Groups.Add(New LibraryAlbumGroup With {
                 .GroupId = "loose_" & NonEmpty(LooseSongs.First().ModuleId, "unknown"),
@@ -3254,6 +3482,17 @@ Public Class PageOmniMixRight
 
         Return Groups
     End Function
+
+    Private Shared Sub AddSingleLibrarySong(Groups As Dictionary(Of String, List(Of OmniMixSongInfo)), ModuleId As String, Song As OmniMixSongInfo)
+        If Song Is Nothing Then Return
+        Dim Key = NonEmpty(ModuleId, "unknown")
+        Dim GroupSongs As List(Of OmniMixSongInfo) = Nothing
+        If Not Groups.TryGetValue(Key, GroupSongs) Then
+            GroupSongs = New List(Of OmniMixSongInfo)
+            Groups(Key) = GroupSongs
+        End If
+        If Not GroupSongs.Any(Function(Item) String.Equals(Item.Uuid, Song.Uuid, StringComparison.OrdinalIgnoreCase)) Then GroupSongs.Add(Song)
+    End Sub
 
     Private Sub AddLibraryAlbumItem(Group As LibraryAlbumGroup)
         Dim IsExpanded = ExpandedLibraryAlbums.Contains(Group.GroupId)

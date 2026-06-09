@@ -98,7 +98,7 @@ Public Module OmniMixPlatformService
     End Function
 
     Public Async Function StartServiceAsync() As Task(Of Boolean)
-        Await UpdateServiceBinaryPathAsync()
+        If Not Await UpdateServiceBinaryPathAsync() Then Return False
         Dim Normal = Await RunProcessAsync("sc.exe", New List(Of String) From {"start", ServiceName})
         If Normal.ExitCode = 0 Then Return True
         Return Await RunElevatedAsync("sc.exe", New List(Of String) From {"start", ServiceName})

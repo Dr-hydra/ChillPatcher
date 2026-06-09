@@ -196,6 +196,14 @@
                                       VerticalAlignment="Top"
                                       Title="个性化"
                                       IsScaleAnimationEnabled="False" />
+                    <local:MyListItem x:Name="ItemSettingsMaintenance"
+                                      Type="RadioBox"
+                                      Tag="maintenance"
+                                      MinPaddingRight="35"
+                                      Height="36"
+                                      VerticalAlignment="Top"
+                                      Title="初始化与缓存"
+                                      IsScaleAnimationEnabled="False" />
                     <local:MyListItem x:Name="ItemSettingsInstances"
                                       Type="RadioBox"
                                       Tag="instances"

@@ -6,6 +6,13 @@ Public Module OmniMixBackendManager
     Private Const BackendExeName As String = "OmniMixPlayer.Backend.exe"
     Public Async Function EnsureStartedAsync() As Task(Of OmniMixBackendStatus)
         Dim BackendPath = FindBackendExe()
+        If Not String.IsNullOrWhiteSpace(BackendPath) Then
+            Try
+                Await OmniMixPlatformService.UpdateServiceBinaryPathAsync(BackendPath)
+            Catch ex As Exception
+                Logger.Warn(ex, "同步 OmniMix 后端服务路径失败，将继续直接发现或启动后端")
+            End Try
+        End If
         Dim Status = Await OmniMixApiClient.DiscoverAsync()
         If Status.IsOnline Then
             Status.Message = "已发现正在运行的 OmniMix 后端。"
@@ -60,6 +67,9 @@ StartBundledBackend:
     End Function
 
     Public Function FindBackendExe() As String
+        Dim LocalBackendPath = GetLocalBackendExe()
+        If Not String.IsNullOrWhiteSpace(LocalBackendPath) Then Return LocalBackendPath
+
         Dim ConfiguredPath = GetConfiguredBackendPath()
         If Not String.IsNullOrWhiteSpace(ConfiguredPath) Then
             Try
@@ -83,6 +93,15 @@ StartBundledBackend:
         Return Nothing
     End Function
 
+    Private Function GetLocalBackendExe() As String
+        Try
+            Dim Candidate = Path.GetFullPath(Path.Combine(PathExeFolder, BackendExeName))
+            If File.Exists(Candidate) Then Return Candidate
+        Catch
+        End Try
+        Return Nothing
+    End Function
+
     Public Function GetConfiguredBackendPath() As String
         Try
             Return Settings.Get(Of String)("OmniMixBackendPath")
@@ -98,7 +117,6 @@ StartBundledBackend:
     Private Function GetBackendExeCandidates() As IEnumerable(Of String)
         Dim BaseDir = PathExeFolder
         Return New List(Of String) From {
-            Path.Combine(BaseDir, "..", "..", "..", "..", "..", "bin", "Backend", "win-x64", BackendExeName),
             Path.Combine(BaseDir, BackendExeName),
             Path.Combine(BaseDir, "Backend", BackendExeName),
             Path.Combine(BaseDir, "OmniMixPlayer.Backend", BackendExeName),

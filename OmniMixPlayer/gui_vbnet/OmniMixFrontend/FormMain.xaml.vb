@@ -1,7 +1,28 @@
 Imports System.ComponentModel
+Imports System.Runtime.InteropServices
 Imports System.Windows.Interop
 
 Public Class FormMain
+
+    Private Const WmHotkey As Integer = &H312
+    Private Const WmAppCommand As Integer = &H319
+    Private Const ModNoRepeat As UInteger = &H4000UI
+    Private Const VkMediaNextTrack As UInteger = &HB0UI
+    Private Const VkMediaPreviousTrack As UInteger = &HB1UI
+    Private Const VkMediaStop As UInteger = &HB2UI
+    Private Const VkMediaPlayPause As UInteger = &HB3UI
+    Private Const HotkeyMediaNextTrack As Integer = &H4F01
+    Private Const HotkeyMediaPreviousTrack As Integer = &H4F02
+    Private Const HotkeyMediaStop As Integer = &H4F03
+    Private Const HotkeyMediaPlayPause As Integer = &H4F04
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Private Shared Function RegisterHotKey(hWnd As IntPtr, id As Integer, fsModifiers As UInteger, vk As UInteger) As Boolean
+    End Function
+
+    <DllImport("user32.dll", SetLastError:=True)>
+    Private Shared Function UnregisterHotKey(hWnd As IntPtr, id As Integer) As Boolean
+    End Function
 
     Private FrmOmniMixHome As PageOmniMixRight
     Private FrmOmniMixLibrary As PageOmniMixRight
@@ -134,6 +155,7 @@ Public Class FormMain
 
         Dim HwndSource As Interop.HwndSource = PresentationSource.FromVisual(Me)
         HwndSource.AddHook(New Interop.HwndSourceHook(AddressOf WndProc))
+        RegisterMediaHotkeys()
         AniStart({
             AaCode(Sub() AniControlEnabled -= 1, 50),
             AaOpacity(Me, Settings.Get(Of Integer)("UiLauncherTransparent") / 1000 + 0.4, 250, 100),
@@ -310,6 +332,7 @@ Public Class FormMain
     End Sub
 
     Private Sub DisposeOmniMixTrayIcon()
+        UnregisterMediaHotkeys()
         If OmniMixTrayIcon IsNot Nothing Then
             OmniMixTrayIcon.Visible = False
             OmniMixTrayIcon.Dispose()
@@ -401,13 +424,82 @@ Public Class FormMain
     End Sub
 
     Private Function WndProc(hwnd As IntPtr, msg As Integer, wParam As IntPtr, lParam As IntPtr, ByRef handled As Boolean) As IntPtr
-        If msg = 400 * 16 + 2 Then
-            If IsWindowLoadFinished Then
-                ShowWindowToTop()
-                handled = True
-            End If
-        End If
+        Select Case msg
+            Case 400 * 16 + 2
+                If IsWindowLoadFinished Then
+                    ShowWindowToTop()
+                    handled = True
+                End If
+            Case WmHotkey
+                handled = HandleMediaHotkey(wParam.ToInt32())
+            Case WmAppCommand
+                Dim Command = (lParam.ToInt64() >> 16) And &H7FFL
+                handled = HandleMediaAppCommand(CInt(Command))
+        End Select
         Return IntPtr.Zero
+    End Function
+
+    Private Sub RegisterMediaHotkeys()
+        If Handle = IntPtr.Zero Then Return
+        RegisterMediaHotkey(HotkeyMediaNextTrack, VkMediaNextTrack, "下一首")
+        RegisterMediaHotkey(HotkeyMediaPreviousTrack, VkMediaPreviousTrack, "上一首")
+        RegisterMediaHotkey(HotkeyMediaStop, VkMediaStop, "停止")
+        RegisterMediaHotkey(HotkeyMediaPlayPause, VkMediaPlayPause, "播放/暂停")
+    End Sub
+
+    Private Sub RegisterMediaHotkey(Id As Integer, VirtualKey As UInteger, DisplayName As String)
+        If RegisterHotKey(Handle, Id, ModNoRepeat, VirtualKey) Then
+            Logger.Info("已注册全局媒体快捷键：" & DisplayName)
+        Else
+            Logger.Warn($"无法注册全局媒体快捷键：{DisplayName}，Win32 错误 {Marshal.GetLastWin32Error()}")
+        End If
+    End Sub
+
+    Private Sub UnregisterMediaHotkeys()
+        If Handle = IntPtr.Zero Then Return
+        UnregisterHotKey(Handle, HotkeyMediaNextTrack)
+        UnregisterHotKey(Handle, HotkeyMediaPreviousTrack)
+        UnregisterHotKey(Handle, HotkeyMediaStop)
+        UnregisterHotKey(Handle, HotkeyMediaPlayPause)
+    End Sub
+
+    Private Function HandleMediaHotkey(Id As Integer) As Boolean
+        Select Case Id
+            Case HotkeyMediaNextTrack
+                Return SendMediaCommand("next")
+            Case HotkeyMediaPreviousTrack
+                Return SendMediaCommand("prev")
+            Case HotkeyMediaStop
+                Return SendMediaCommand("stop")
+            Case HotkeyMediaPlayPause
+                Return SendMediaCommand("toggle")
+        End Select
+        Return False
+    End Function
+
+    Private Function HandleMediaAppCommand(Command As Integer) As Boolean
+        Select Case Command
+            Case 11
+                Return SendMediaCommand("next")
+            Case 12
+                Return SendMediaCommand("prev")
+            Case 13
+                Return SendMediaCommand("stop")
+            Case 14
+                Return SendMediaCommand("toggle")
+            Case 46
+                Return SendMediaCommand("resume")
+            Case 47
+                Return SendMediaCommand("pause")
+        End Select
+        Return False
+    End Function
+
+    Private Function SendMediaCommand(Command As String) As Boolean
+        If FrmOmniMixLeft Is Nothing Then Return False
+        Logger.Info("收到媒体快捷键：" & Command)
+        FrmOmniMixLeft.HandleMediaCommand(Command)
+        Return True
     End Function
 
     Private _Hidden As Boolean = False

@@ -443,6 +443,85 @@
                         </local:MyCard>
                     </StackPanel>
 
+                    <StackPanel x:Name="PanSettingsMaintenance"
+                                Margin="0,0,0,18"
+                                Visibility="Collapsed">
+                        <TextBlock x:Name="LabCacheSummary"
+                                   Text="正在统计缓存大小..."
+                                   TextWrapping="Wrap"
+                                   FontSize="13"
+                                   Foreground="{DynamicResource ColorBrush2}"
+                                   Margin="0,0,0,14" />
+                        <local:MyCard Title="缓存文件夹" Margin="0,0,0,15">
+                            <Grid Margin="25,40,25,17">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <local:MyTextBox x:Name="TxtCachePath"
+                                                 Height="34"
+                                                 HintText="使用系统临时目录" />
+                                <local:MyTextButton x:Name="BtnBrowseCachePath"
+                                                    Grid.Column="1"
+                                                    Text="选择"
+                                                    Padding="9,5,9,5"
+                                                    Margin="10,0,0,0" />
+                                <local:MyTextButton x:Name="BtnApplyCachePath"
+                                                    Grid.Column="2"
+                                                    Text="应用"
+                                                    Padding="9,5,9,5"
+                                                    Margin="10,0,0,0" />
+                                <local:MyTextButton x:Name="BtnResetCachePath"
+                                                    Grid.Column="3"
+                                                    Text="恢复默认"
+                                                    Padding="9,5,9,5"
+                                                    Margin="10,0,0,0" />
+                            </Grid>
+                        </local:MyCard>
+                        <local:MyCard Title="自定义初始化范围" Margin="0,0,0,15">
+                            <StackPanel Margin="25,40,25,17">
+                                <local:MyCheckBox x:Name="CheckInitializeFrontendSettings"
+                                                  Checked="True"
+                                                  Text="前端全部设置" />
+                                <local:MyCheckBox x:Name="CheckInitializeBackendConfig"
+                                                  Checked="True"
+                                                  Text="后端配置、播放实例与历史"
+                                                  Margin="0,8,0,0" />
+                                <local:MyCheckBox x:Name="CheckInitializeLibrary"
+                                                  Checked="True"
+                                                  Text="全部曲库内容"
+                                                  Margin="0,8,0,0" />
+                                <local:MyCheckBox x:Name="CheckInitializeMusicSources"
+                                                  Checked="True"
+                                                  Text="音乐源登录状态与模块数据"
+                                                  Margin="0,8,0,0" />
+                                <local:MyCheckBox x:Name="CheckInitializeCache"
+                                                  Checked="True"
+                                                  Text="前端缓存"
+                                                  Margin="0,8,0,0" />
+                                <TextBlock Text="游戏集成安装文件、安装标记、游戏路径映射和后台服务安装状态始终保留。"
+                                           TextWrapping="Wrap"
+                                           Foreground="{DynamicResource ColorBrush2}"
+                                           Margin="0,12,0,0" />
+                            </StackPanel>
+                        </local:MyCard>
+                        <StackPanel Orientation="Horizontal">
+                            <local:MyTextButton x:Name="BtnInitializeSelected"
+                                                Text="初始化所选内容"
+                                                Padding="9,5,9,5"
+                                                Margin="0,0,12,0" />
+                            <local:MyTextButton x:Name="BtnClearFrontendCache"
+                                                Text="仅清理缓存"
+                                                Padding="9,5,9,5"
+                                                Margin="0,0,12,0" />
+                            <local:MyTextButton x:Name="BtnRefreshCacheSize"
+                                                Text="重新统计"
+                                                Padding="9,5,9,5" />
+                        </StackPanel>
+                    </StackPanel>
+
                     <StackPanel x:Name="PanSettingsService" Margin="0,0,0,18">
                         <TextBlock x:Name="LabServiceSummary"
                                    Text="后端服务：正在读取..."

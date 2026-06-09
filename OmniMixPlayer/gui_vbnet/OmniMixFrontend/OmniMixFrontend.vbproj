@@ -96,6 +96,8 @@
   <ItemGroup>
     <PackageReference Include="CacheCow.Client" Version="2.13.1" />
     <PackageReference Include="CacheCow.Client.FileStore" Version="2.13.1" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.67.*" />
+    <PackageReference Include="Grpc.Net.Client.Web" Version="2.67.*" />
     <PackageReference Include="Microsoft.AspNet.WebApi.Client" Version="6.0.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="NAudio" Version="2.2.1" />
@@ -115,6 +117,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\OmniMixPlayer.SDK\OmniMixPlayer.SDK.csproj" />
     <ProjectReference Include="..\OmniMixCore\Shared\OmniMixCore.csproj" />
     <ProjectReference Include="..\OmniMixCore\Wpf\OmniMixCore.Wpf.csproj" />
   </ItemGroup>
