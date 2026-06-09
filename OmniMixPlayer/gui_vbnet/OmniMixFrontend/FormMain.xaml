@@ -127,7 +127,12 @@
                         </Grid.ColumnDefinitions>
                         <Path x:Name="ShapeTitleLogo" Data="M26,29 v-25 h6 a7,7 180 0 1 0,14 h-6 M62.5,6.5 a10,11.5 180 1 0 0,18 M71,2.5 v24.5 h13.5" SnapsToDevicePixels="False" UseLayoutRounding="False" IsHitTestVisible="False" HorizontalAlignment="Left" Margin="19,15.5,0,15.5" Stretch="fill" Stroke="White" StrokeThickness="2.2" Width="39" />
                         <TextBlock x:Name="LabTitleLogo" Visibility="Collapsed" SnapsToDevicePixels="False" UseLayoutRounding="False" IsHitTestVisible="False" HorizontalAlignment="Left" Margin="18,0,0,0" Foreground="White" FontSize="17" VerticalAlignment="Center" />
-                        <TextBlock x:Name="LabOmniMixConnectionStatus" Visibility="Collapsed" SnapsToDevicePixels="False" UseLayoutRounding="False" IsHitTestVisible="False" HorizontalAlignment="Left" Margin="96,1,0,0" Foreground="White" FontSize="12" Opacity="0.72" VerticalAlignment="Center" />
+                        <StackPanel x:Name="PanOmniMixConnectionStatus" Visibility="Collapsed" Orientation="Horizontal" HorizontalAlignment="Left" Margin="96,1,0,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="LabOmniMixConnectionStatus" SnapsToDevicePixels="False" UseLayoutRounding="False" IsHitTestVisible="False" Foreground="White" FontSize="12" Opacity="0.72" VerticalAlignment="Center" />
+                            <Border x:Name="PanOmniMixInstanceMenu" Visibility="Collapsed" Margin="9,0,0,0" Padding="6,2" CornerRadius="4" Cursor="Hand" Background="#20FFFFFF" MouseLeftButtonUp="PanOmniMixInstanceMenu_MouseLeftButtonUp">
+                                <TextBlock x:Name="LabOmniMixInstanceMenu" Text="实例 ▾" Foreground="White" FontSize="12" Opacity="0.82" />
+                            </Border>
+                        </StackPanel>
                         <local:MyImage x:Name="ImageTitleLogo" SnapsToDevicePixels="False" UseLayoutRounding="False" IsHitTestVisible="False" HorizontalAlignment="Left" Margin="7" VerticalAlignment="Center" Visibility="Collapsed" />
                         <StackPanel Grid.Column="1" x:Name="PanTitleSelect" HorizontalAlignment="Left" Height="27" VerticalAlignment="Center" Orientation="Horizontal" Margin="13,0">
                             <local:MyRadioButton x:Name="BtnTitleSelect0" Text="播放" Tag="0" Margin="5,0" Checked="True" Padding="2,0"

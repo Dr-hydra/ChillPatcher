@@ -7,12 +7,14 @@ Imports Newtonsoft.Json
 Public Enum OmniMixBepInExStatus
     NotInstalled
     Managed
+    NeedsUpdate
     Unmanaged
 End Enum
 
 Public Enum OmniMixModInstallStatus
     NotInstalled
     Installed
+    NeedsUpdate
 End Enum
 
 Public Class OmniMixGameDeclaration
@@ -112,7 +114,7 @@ Public Module OmniMixModDeploymentService
             New OmniMixModDeclaration With {
                 .Id = "chill_patcher",
                 .Name = "ChillPatcher",
-                .Version = "1.0.0",
+                .Version = GetBundledModVersion("chill_patcher", "1.0.0"),
                 .ArchiveName = "ChillPatcher.zip",
                 .TargetFramework = "bepinex_5",
                 .FolderName = "ChillPatcher",
@@ -121,7 +123,7 @@ Public Module OmniMixModDeploymentService
             New OmniMixModDeclaration With {
                 .Id = "fh6_omni_bridge",
                 .Name = "Forza Horizon 6 Omni Bridge",
-                .Version = "1.0.0",
+                .Version = GetBundledModVersion("fh6_omni_bridge", "2.0.2"),
                 .ArchiveName = "FH6OmniBridge.zip",
                 .FolderName = "fh6-omnimix",
                 .RootFilesToLink = New List(Of String) From {"version.dll", "OmniPcmShared.dll"},
@@ -130,6 +132,23 @@ Public Module OmniMixModDeploymentService
                 .Mode = "server"
             }
         }
+    End Function
+
+    Private Function GetBundledModVersion(ModId As String, Fallback As String) As String
+        Try
+            Dim VersionInfoPath = ResolveAssetPath("version_info.json")
+            If String.IsNullOrWhiteSpace(VersionInfoPath) Then Return Fallback
+            Dim Root = JObject.Parse(File.ReadAllText(VersionInfoPath, Encoding.UTF8))
+            Dim ModVersions = TryCast(Root("mod_versions"), JObject)
+            Dim VersionToken = If(ModVersions Is Nothing, Nothing, ModVersions(ModId))
+            If VersionToken IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(VersionToken.ToString()) Then Return VersionToken.ToString()
+
+            Dim LegacyField = If(String.Equals(ModId, "fh6_omni_bridge", StringComparison.OrdinalIgnoreCase), "fh6_bridge_version", "mod_version")
+            VersionToken = Root(LegacyField)
+            If VersionToken IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(VersionToken.ToString()) Then Return VersionToken.ToString()
+        Catch
+        End Try
+        Return Fallback
     End Function
 
     Public Function GetGame(GameId As String) As OmniMixGameDeclaration
@@ -160,6 +179,12 @@ Public Module OmniMixModDeploymentService
     Private ReadOnly Property PathsDbPath As String
         Get
             Return Path.Combine(ManagerDir, "vb_game_paths.json")
+        End Get
+    End Property
+
+    Private ReadOnly Property InstalledVersionsDbPath As String
+        Get
+            Return Path.Combine(ManagerDir, "installed_versions.json")
         End Get
     End Property
 
@@ -200,7 +225,13 @@ Public Module OmniMixModDeploymentService
         Dim CoreDllPath = Path.Combine(GamePath, "BepInEx", "core", "BepInEx.dll")
         Dim MarkerPath = Path.Combine(GamePath, "BepInEx", ".omnimix_managed")
         If File.Exists(WinHttpPath) OrElse File.Exists(CoreDllPath) Then
-            Return If(File.Exists(MarkerPath), OmniMixBepInExStatus.Managed, OmniMixBepInExStatus.Unmanaged)
+            If Not File.Exists(MarkerPath) Then Return OmniMixBepInExStatus.Unmanaged
+            Dim InstalledVersion = ReadTextFile(MarkerPath)
+            If Not String.IsNullOrWhiteSpace(InstalledVersion) AndAlso
+               Not String.Equals(InstalledVersion, GetBepInExFramework().Version, StringComparison.OrdinalIgnoreCase) Then
+                Return OmniMixBepInExStatus.NeedsUpdate
+            End If
+            Return OmniMixBepInExStatus.Managed
         End If
         Return OmniMixBepInExStatus.NotInstalled
     End Function
@@ -216,11 +247,33 @@ Public Module OmniMixModDeploymentService
             For Each RelativeDir In ModInfo.RootDirsToLink
                 If Not Directory.Exists(Path.Combine(GamePath, RelativeDir)) Then Return OmniMixModInstallStatus.NotInstalled
             Next
-            Return OmniMixModInstallStatus.Installed
+            Return If(NeedsVersionUpdate(GamePath, ModInfo), OmniMixModInstallStatus.NeedsUpdate, OmniMixModInstallStatus.Installed)
         End If
 
-        If Directory.Exists(Path.Combine(GamePath, "BepInEx", "plugins", ModInfo.FolderName)) Then Return OmniMixModInstallStatus.Installed
+        If Directory.Exists(Path.Combine(GamePath, "BepInEx", "plugins", ModInfo.FolderName)) Then
+            Return If(NeedsVersionUpdate(GamePath, ModInfo), OmniMixModInstallStatus.NeedsUpdate, OmniMixModInstallStatus.Installed)
+        End If
         Return OmniMixModInstallStatus.NotInstalled
+    End Function
+
+    Public Function GetGameVersion(GamePath As String, Game As OmniMixGameDeclaration) As String
+        If Game Is Nothing OrElse Not String.Equals(Game.Id, "forza_horizon_6", StringComparison.OrdinalIgnoreCase) Then Return "1.0.0"
+        Try
+            Dim ConfigPath = Path.Combine(GamePath, "MicrosoftGame.Config")
+            If Not File.Exists(ConfigPath) Then Return "0.0.0.0"
+            Dim Match = Text.RegularExpressions.Regex.Match(File.ReadAllText(ConfigPath), "\bVersion=""([^""]+)""", Text.RegularExpressions.RegexOptions.IgnoreCase)
+            If Match.Success Then Return Match.Groups(1).Value
+        Catch
+        End Try
+        Return "0.0.0.0"
+    End Function
+
+    Public Function NeedsVersionUpdate(GamePath As String, ModInfo As OmniMixModDeclaration) As Boolean
+        If ModInfo Is Nothing OrElse String.IsNullOrWhiteSpace(ModInfo.Version) Then Return False
+        Dim InstalledVersion = ReadManagedMarker(GamePath, ModInfo.Id)
+        If String.IsNullOrWhiteSpace(InstalledVersion) Then InstalledVersion = GetInstalledVersion(ModInfo.Id)
+        Return Not String.IsNullOrWhiteSpace(InstalledVersion) AndAlso
+            Not String.Equals(InstalledVersion, ModInfo.Version, StringComparison.OrdinalIgnoreCase)
     End Function
 
     Public Function IsPackageAvailable(ArchiveName As String) As Boolean
@@ -313,6 +366,7 @@ Public Module OmniMixModDeploymentService
             Dim MarkerPath = Path.Combine(GamePath, "BepInEx", ".omnimix_managed")
             Directory.CreateDirectory(Path.GetDirectoryName(MarkerPath))
             File.WriteAllText(MarkerPath, Framework.Version, Encoding.UTF8)
+            RecordInstalledVersion(Framework.Id, Framework.Version)
             AddLog(Logs, "BepInEx deployment completed.")
             Return True
         Catch Ex As Exception
@@ -336,6 +390,7 @@ Public Module OmniMixModDeploymentService
 
             Dim MarkerPath = Path.Combine(GamePath, "BepInEx", ".omnimix_managed")
             If File.Exists(MarkerPath) Then File.Delete(MarkerPath)
+            RemoveVersionRecord(Framework.Id)
 
             DeleteDirectoryIfEmpty(Path.Combine(GamePath, "BepInEx", "plugins"), Logs)
             DeleteDirectoryIfEmpty(Path.Combine(GamePath, "BepInEx", "patchers"), Logs)
@@ -376,6 +431,7 @@ Public Module OmniMixModDeploymentService
                 End If
                 AddLog(Logs, "  Placed plugin directory: " & ModInfo.FolderName)
             End If
+            RecordInstalledVersion(ModInfo.Id, ModInfo.Version)
 
             Dim InstanceId = GetExpectedInstanceId(GamePath, ModInfo)
             Dim ExistingInstanceId = ReadInstanceId(GamePath)
@@ -414,6 +470,7 @@ Public Module OmniMixModDeploymentService
 
             DeleteInstanceId(GamePath)
             DeletePortFile(GamePath)
+            RemoveVersionRecord(ModInfo.Id)
             AddLog(Logs, ModInfo.Name & " undeployment completed.")
             Return True
         Catch Ex As Exception
@@ -445,7 +502,7 @@ Public Module OmniMixModDeploymentService
 
     Public Function EnsureRuntimeBinding(GamePath As String, ModInfo As OmniMixModDeclaration, BackendPort As Integer, Logs As List(Of String)) As String
         If String.IsNullOrWhiteSpace(GamePath) OrElse ModInfo Is Nothing Then Return ""
-        If CheckModStatus(GamePath, ModInfo) <> OmniMixModInstallStatus.Installed Then Return ""
+        If CheckModStatus(GamePath, ModInfo) = OmniMixModInstallStatus.NotInstalled Then Return ""
 
         Dim ExpectedInstanceId = GetExpectedInstanceId(GamePath, ModInfo)
         Dim ExistingInstanceId = ReadInstanceId(GamePath)
@@ -479,6 +536,58 @@ Public Module OmniMixModDeploymentService
         Return New Dictionary(Of String, String)
     End Function
 
+    Private Function ReadInstalledVersions() As Dictionary(Of String, String)
+        Try
+            If File.Exists(InstalledVersionsDbPath) Then
+                Dim Result = JsonConvert.DeserializeObject(Of Dictionary(Of String, String))(File.ReadAllText(InstalledVersionsDbPath, Encoding.UTF8))
+                If Result IsNot Nothing Then Return New Dictionary(Of String, String)(Result, StringComparer.OrdinalIgnoreCase)
+            End If
+        Catch
+        End Try
+        Return New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
+    End Function
+
+    Private Sub RecordInstalledVersion(Id As String, Version As String)
+        Try
+            Dim Versions = ReadInstalledVersions()
+            Versions(Id) = Version
+            Directory.CreateDirectory(ManagerDir)
+            File.WriteAllText(InstalledVersionsDbPath, JsonConvert.SerializeObject(Versions, JsonSettings), PlainUtf8)
+        Catch
+        End Try
+    End Sub
+
+    Private Sub RemoveVersionRecord(Id As String)
+        Try
+            Dim Versions = ReadInstalledVersions()
+            If Not Versions.Remove(Id) Then Return
+            Directory.CreateDirectory(ManagerDir)
+            File.WriteAllText(InstalledVersionsDbPath, JsonConvert.SerializeObject(Versions, JsonSettings), PlainUtf8)
+        Catch
+        End Try
+    End Sub
+
+    Private Function GetInstalledVersion(Id As String) As String
+        Try
+            Dim Versions = ReadInstalledVersions()
+            If Versions.ContainsKey(Id) Then Return Versions(Id)
+        Catch
+        End Try
+        Return ""
+    End Function
+
+    Private Function ReadManagedMarker(GamePath As String, ModId As String) As String
+        Return ReadTextFile(Path.Combine(GamePath, ".omnimix_mods", ModId & ".managed"))
+    End Function
+
+    Private Function ReadTextFile(FilePath As String) As String
+        Try
+            If File.Exists(FilePath) Then Return File.ReadAllText(FilePath, PlainUtf8).Trim()
+        Catch
+        End Try
+        Return ""
+    End Function
+
     Private Sub ResetDirectory(DirectoryPath As String)
         If Directory.Exists(DirectoryPath) Then Directory.Delete(DirectoryPath, True)
         Directory.CreateDirectory(DirectoryPath)
@@ -487,7 +596,7 @@ Public Module OmniMixModDeploymentService
     Private Function DeployRootModFiles(GamePath As String, ModInfo As OmniMixModDeclaration, ExtractPath As String, Logs As List(Of String)) As Boolean
         Dim MarkerPath = Path.Combine(GamePath, ".omnimix_mods", ModInfo.Id & ".managed")
         Dim WasManaged = File.Exists(MarkerPath)
-        Dim BackupDir = Path.Combine(GamePath, ".omnimix_backup", ModInfo.Id)
+        Dim BackupDir = GetRootModBackupDir(GamePath, ModInfo)
         Directory.CreateDirectory(BackupDir)
 
         For Each RelativeFile In ModInfo.RootFilesToLink
@@ -536,7 +645,9 @@ Public Module OmniMixModDeploymentService
     End Function
 
     Private Sub RestoreAndRemoveRootModFiles(GamePath As String, ModInfo As OmniMixModDeclaration, Logs As List(Of String))
-        Dim BackupDir = Path.Combine(GamePath, ".omnimix_backup", ModInfo.Id)
+        Dim BackupDir = GetRootModBackupDir(GamePath, ModInfo)
+        Dim LegacyBackupDir = Path.Combine(GamePath, ".omnimix_backup", ModInfo.Id)
+        If Not Directory.Exists(BackupDir) AndAlso Directory.Exists(LegacyBackupDir) Then BackupDir = LegacyBackupDir
         For Each RelativeFile In ModInfo.RootFilesToLink
             Dim LinkPath = Path.Combine(GamePath, RelativeFile)
             Dim BackupPath = Path.Combine(BackupDir, RelativeFile)
@@ -564,8 +675,23 @@ Public Module OmniMixModDeploymentService
         Next
 
         DeleteDirectoryIfEmpty(BackupDir, Logs)
+        DeleteDirectoryIfEmpty(Path.Combine(GamePath, ".omnimix_backup", ModInfo.Id), Logs)
         DeleteDirectoryIfEmpty(Path.Combine(GamePath, ".omnimix_backup"), Logs)
     End Sub
+
+    Private Function GetRootModBackupDir(GamePath As String, ModInfo As OmniMixModDeclaration) As String
+        Dim Game = GetGameCatalog().FirstOrDefault(Function(Item) Item.SupportedMods.Contains(ModInfo.Id))
+        Dim GameVersion = GetGameVersion(GamePath, Game)
+        Return Path.Combine(GamePath, ".omnimix_backup", ModInfo.Id, "v" & SanitizePathSegment(GameVersion))
+    End Function
+
+    Private Function SanitizePathSegment(Value As String) As String
+        Dim Result = If(String.IsNullOrWhiteSpace(Value), "unknown", Value.Trim())
+        For Each InvalidCharacter In Path.GetInvalidFileNameChars()
+            Result = Result.Replace(InvalidCharacter, "_"c)
+        Next
+        Return Result
+    End Function
 
     Private Function CreateFileLinkOrCopy(LinkPath As String, TargetPath As String) As Boolean
         DeletePathSafely(LinkPath)

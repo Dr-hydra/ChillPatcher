@@ -19,7 +19,7 @@ Public Class Settings
         New Setting("UiLauncherThemeSat", 85),
         New Setting("UiLauncherThemeLight", 0),
         New Setting("UiBackgroundColorful", True, OnChanged:=Sub() ThemeRefresh()),
-        New Setting("UiBackgroundOpacity", 1000, OnChanged:=AddressOf FormMain.UpdateBackgroundAndTitleBar),
+        New Setting("UiBackgroundOpacity", 0, OnChanged:=AddressOf FormMain.UpdateBackgroundAndTitleBar),
         New Setting("UiBackgroundBlur", 0, OnChanged:=AddressOf FormMain.UpdateBackgroundAndTitleBar),
         New Setting("UiBackgroundSuit", 0, OnChanged:=AddressOf FormMain.UpdateBackgroundAndTitleBar),
         New Setting("UiMusicVolume", 500),

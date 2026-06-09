@@ -34,6 +34,7 @@ Public Class FormMain
     Private OmniMixTrayMenu As System.Windows.Forms.ContextMenuStrip
     Private IsRestoringFromTray As Boolean = False
     Private IsWindowLoadFinished As Boolean = False
+    Private OmniMixBaseUrl As String = ""
 
     Public Enum PageType
         Launch = 0
@@ -358,7 +359,7 @@ Public Class FormMain
 
         ShapeTitleLogo.Visibility = Visibility.Collapsed
         LabTitleLogo.Visibility = Visibility.Visible
-        LabOmniMixConnectionStatus.Visibility = Visibility.Visible
+        PanOmniMixConnectionStatus.Visibility = Visibility.Visible
         ImageTitleLogo.Visibility = Visibility.Collapsed
         PanTitleSelect.Visibility = Visibility.Visible
         LabTitleLogo.Text = "OmniMix"
@@ -368,10 +369,97 @@ Public Class FormMain
 
     Public Sub SetOmniMixConnectionStatus(IsOnline As Boolean, Optional BaseUrl As String = "")
         If LabOmniMixConnectionStatus Is Nothing Then Return
+        OmniMixBaseUrl = If(IsOnline, BaseUrl, "")
         LabOmniMixConnectionStatus.Text = If(IsOnline, "● 已连接", "● 未连接")
         LabOmniMixConnectionStatus.ToolTip = If(IsOnline AndAlso Not String.IsNullOrWhiteSpace(BaseUrl), "OmniMix 后端：" & BaseUrl, "OmniMix 后端未连接")
         LabOmniMixConnectionStatus.Opacity = If(IsOnline, 0.88, 0.62)
+        If Not IsOnline Then UpdateOmniMixInstanceMenu(New List(Of OmniMixPlaybackInstanceInfo), "")
         FrmOmniMixLeft?.SetBackendStatus(IsOnline, BaseUrl)
+    End Sub
+
+    Public Sub UpdateOmniMixInstanceMenu(Instances As List(Of OmniMixPlaybackInstanceInfo), ActiveInstanceId As String)
+        If PanOmniMixInstanceMenu Is Nothing Then Return
+        Instances = If(Instances, New List(Of OmniMixPlaybackInstanceInfo))
+        PanOmniMixInstanceMenu.Visibility = If(Instances.Count > 0, Visibility.Visible, Visibility.Collapsed)
+        Dim ActiveInstance = Instances.FirstOrDefault(Function(Item) String.Equals(Item.Id, ActiveInstanceId, StringComparison.OrdinalIgnoreCase))
+        If ActiveInstance Is Nothing Then ActiveInstance = Instances.FirstOrDefault(Function(Item) Item.Attached)
+        If ActiveInstance Is Nothing Then ActiveInstance = Instances.FirstOrDefault()
+        UpdateOmniMixInstanceMenuLabel(ActiveInstance)
+
+        Dim Menu As New ContextMenu
+        For Each Instance In Instances.OrderByDescending(Function(Item) Item.Attached).ThenBy(Function(Item) GetOmniMixInstanceDisplayName(Item))
+            Dim Header As New StackPanel With {.Orientation = Orientation.Horizontal}
+            Header.Children.Add(New TextBlock With {
+                .Text = "●",
+                .Foreground = If(Instance.Attached, New SolidColorBrush(Color.FromRgb(78, 201, 120)), New SolidColorBrush(Color.FromRgb(232, 91, 91))),
+                .Margin = New Thickness(0, 0, 7, 0)
+            })
+            Header.Children.Add(New TextBlock With {.Text = GetOmniMixInstanceDisplayName(Instance)})
+
+            Dim Item As New MenuItem With {
+                .Header = Header,
+                .Tag = Instance,
+                .IsCheckable = True,
+                .IsChecked = String.Equals(Instance.Id, ActiveInstanceId, StringComparison.OrdinalIgnoreCase)
+            }
+            AddHandler Item.Click, AddressOf OmniMixInstanceMenuItem_Click
+            Menu.Items.Add(Item)
+        Next
+        PanOmniMixInstanceMenu.ContextMenu = Menu
+    End Sub
+
+    Private Shared Function GetOmniMixInstanceDisplayName(Instance As OmniMixPlaybackInstanceInfo) As String
+        If Instance Is Nothing Then Return "未知实例"
+        If Not String.IsNullOrWhiteSpace(Instance.GameName) Then Return Instance.GameName
+        If Not String.IsNullOrWhiteSpace(Instance.Id) Then Return Instance.Id
+        If Not String.IsNullOrWhiteSpace(Instance.ClientId) Then Return Instance.ClientId
+        Return "未知实例"
+    End Function
+
+    Private Sub UpdateOmniMixInstanceMenuLabel(Instance As OmniMixPlaybackInstanceInfo)
+        LabOmniMixInstanceMenu.Inlines.Clear()
+        If Instance Is Nothing Then Return
+        LabOmniMixInstanceMenu.Inlines.Add(New Run("●") With {
+            .Foreground = If(Instance.Attached, New SolidColorBrush(Color.FromRgb(78, 201, 120)), New SolidColorBrush(Color.FromRgb(232, 91, 91)))
+        })
+        LabOmniMixInstanceMenu.Inlines.Add(New Run(" " & GetOmniMixGameAbbreviation(GetOmniMixInstanceDisplayName(Instance)) & " ▾"))
+        LabOmniMixInstanceMenu.ToolTip = GetOmniMixInstanceDisplayName(Instance) & If(Instance.Attached, "（在线）", "（离线）")
+    End Sub
+
+    Private Shared Function GetOmniMixGameAbbreviation(DisplayName As String) As String
+        If String.IsNullOrWhiteSpace(DisplayName) Then Return "GAME"
+        Dim Matches = Text.RegularExpressions.Regex.Matches(DisplayName, "[A-Za-z]+|\d+")
+        If Matches.Count > 0 Then
+            Dim Result As New Text.StringBuilder
+            For Each Match As Text.RegularExpressions.Match In Matches
+                Result.Append(If(Char.IsDigit(Match.Value(0)), Match.Value, Match.Value(0).ToString().ToUpperInvariant()))
+            Next
+            If Result.Length > 0 Then Return Result.ToString()
+        End If
+        Return New String(DisplayName.Where(Function(Character) Not Char.IsWhiteSpace(Character)).Take(3).ToArray())
+    End Function
+
+    Private Sub PanOmniMixInstanceMenu_MouseLeftButtonUp(sender As Object, e As MouseButtonEventArgs)
+        If PanOmniMixInstanceMenu.ContextMenu Is Nothing OrElse PanOmniMixInstanceMenu.ContextMenu.Items.Count = 0 Then Return
+        PanOmniMixInstanceMenu.ContextMenu.PlacementTarget = PanOmniMixInstanceMenu
+        PanOmniMixInstanceMenu.ContextMenu.IsOpen = True
+        e.Handled = True
+    End Sub
+
+    Private Async Sub OmniMixInstanceMenuItem_Click(sender As Object, e As RoutedEventArgs)
+        Dim Item = TryCast(sender, MenuItem)
+        Dim Instance = If(Item Is Nothing, Nothing, TryCast(Item.Tag, OmniMixPlaybackInstanceInfo))
+        If Instance Is Nothing OrElse String.IsNullOrWhiteSpace(OmniMixBaseUrl) OrElse String.IsNullOrWhiteSpace(Instance.Id) Then Return
+        Try
+            Await OmniMixApiClient.SetActiveInstanceAsync(OmniMixBaseUrl, Instance.Id)
+            UpdateOmniMixInstanceMenuLabel(Instance)
+            For Each MenuItem In PanOmniMixInstanceMenu.ContextMenu.Items.OfType(Of MenuItem)
+                Dim MenuInstance = TryCast(MenuItem.Tag, OmniMixPlaybackInstanceInfo)
+                MenuItem.IsChecked = MenuInstance IsNot Nothing AndAlso String.Equals(MenuInstance.Id, Instance.Id, StringComparison.OrdinalIgnoreCase)
+            Next
+        Catch Ex As Exception
+            Hint("切换运行实例失败：" & Ex.Message, HintType.Red)
+        End Try
     End Sub
 
     Private Sub FormMain_KeyDown(sender As Object, e As KeyEventArgs) Handles Me.KeyDown

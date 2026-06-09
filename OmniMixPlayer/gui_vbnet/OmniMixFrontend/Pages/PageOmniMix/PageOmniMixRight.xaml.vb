@@ -407,6 +407,7 @@ Public Class PageOmniMixRight
     Private Sub RenderSettingsStats(Stats As OmniMixInstanceStatsInfo, Instances As List(Of OmniMixPlaybackInstanceInfo), ActiveInstanceConfigId As String)
         Stats = If(Stats, New OmniMixInstanceStatsInfo)
         Instances = If(Instances, New List(Of OmniMixPlaybackInstanceInfo))
+        FrmMain?.UpdateOmniMixInstanceMenu(Instances, ActiveInstanceConfigId)
         LabInstanceStats.Text =
             $"实例统计：{Stats.InstanceCount} 个实例，{Stats.AttachedAudioClients} 个在线音频端，{Stats.ControllerClients} 个控制端，队列合计 {Stats.TotalQueueItems} 首。"
 
@@ -729,6 +730,11 @@ Public Class PageOmniMixRight
 
         BtnInitializeSelected.IsEnabled = False
         Try
+            Dim BackendRoots = Await GetInitializationBackendRootsAsync()
+            Dim CacheRoots = GetInitializationCacheRoots()
+            If (InitializeBackend OrElse InitializeLibrary OrElse InitializeSources) AndAlso BackendRoots.Count = 0 Then
+                Throw New DirectoryNotFoundException("未找到有效的 OmniMix 后端目录，无法初始化后端数据。")
+            End If
             If InitializeBackend OrElse InitializeLibrary OrElse InitializeSources Then Await StopBackendForInitializationAsync()
             If InitializeSettings Then
                 For Each Key In Settings.Entries.Keys.ToList()
@@ -736,7 +742,7 @@ Public Class PageOmniMixRight
                 Next
                 PathTemp = System.IO.Path.GetTempPath().TrimEnd("\"c, "/"c) & "\OmniMixPlayer\"
             End If
-            Await Task.Run(Sub() InitializeSelectedData(InitializeBackend, InitializeLibrary, InitializeSources, InitializeCache))
+            Await Task.Run(Sub() InitializeSelectedData(BackendRoots, CacheRoots, InitializeBackend, InitializeLibrary, InitializeSources, InitializeCache))
 
             CurrentBaseUrl = ""
             HasCheckedBackend = False
@@ -771,34 +777,74 @@ Public Class PageOmniMixRight
         Await Task.Delay(1000)
     End Function
 
-    Private Sub InitializeSelectedData(InitializeBackend As Boolean, InitializeLibrary As Boolean, InitializeSources As Boolean, InitializeCache As Boolean)
-        Dim BackendPath = OmniMixBackendManager.FindBackendExe()
-        Dim BackendRoot = If(String.IsNullOrWhiteSpace(BackendPath), PathExeFolder, System.IO.Path.GetDirectoryName(BackendPath))
-        Dim ConfigDir = System.IO.Path.Combine(BackendRoot, "config")
+    Private Async Function GetInitializationBackendRootsAsync() As Task(Of List(Of String))
+        Dim BackendPaths As New List(Of String) From {
+            OmniMixBackendManager.FindBackendExe(),
+            OmniMixBackendManager.GetConfiguredBackendPath(),
+            OmniMixBackendManager.FindDefaultBackendExe(),
+            Await OmniMixPlatformService.GetServiceBinaryPathAsync()
+        }
+        Dim Result As New List(Of String)
+        For Each BackendPath In BackendPaths
+            If String.IsNullOrWhiteSpace(BackendPath) Then Continue For
+            Try
+                Dim FullBackendPath = System.IO.Path.GetFullPath(BackendPath.Trim().Trim(""""c))
+                If Not File.Exists(FullBackendPath) OrElse
+                   Not String.Equals(System.IO.Path.GetFileName(FullBackendPath), "OmniMixPlayer.Backend.exe", StringComparison.OrdinalIgnoreCase) Then Continue For
+                Dim BackendRoot = System.IO.Path.GetDirectoryName(FullBackendPath).TrimEnd("\"c, "/"c)
+                If Not Result.Any(Function(Item) String.Equals(Item, BackendRoot, StringComparison.OrdinalIgnoreCase)) Then Result.Add(BackendRoot)
+            Catch
+            End Try
+        Next
+        Return Result
+    End Function
 
-        If InitializeBackend Then
-            DeleteMatchingFiles(ConfigDir, "global_config.json")
-            DeleteMatchingFiles(ConfigDir, "omnimix_instances*.db")
-        End If
-        If InitializeLibrary Then
-            DeleteMatchingFiles(ConfigDir, "omnimix_library*.db")
-            Dim LocalFolderData = System.IO.Path.Combine(BackendRoot, "modules", "com.chillpatcher.localfolder", "data")
-            DirectoryUtils.Delete(LocalFolderData)
-        End If
-        If InitializeSources Then
-            If Directory.Exists(ConfigDir) Then
-                For Each ConfigFile In Directory.GetFiles(ConfigDir, "*.json")
-                    If Not String.Equals(System.IO.Path.GetFileName(ConfigFile), "global_config.json", StringComparison.OrdinalIgnoreCase) Then FileUtils.Delete(ConfigFile)
-                Next
+    Private Shared Function GetInitializationCacheRoots() As List(Of String)
+        Dim Candidates As New List(Of String) From {
+            PathTemp,
+            Settings.Get(Of String)("SystemSystemCache"),
+            System.IO.Path.GetTempPath().TrimEnd("\"c, "/"c) & "\OmniMixPlayer\"
+        }
+        Dim Result As New List(Of String)
+        For Each Candidate In Candidates
+            If String.IsNullOrWhiteSpace(Candidate) Then Continue For
+            Try
+                Dim FullPath = System.IO.Path.GetFullPath(Candidate).TrimEnd("\"c, "/"c)
+                If Not Result.Any(Function(Item) String.Equals(Item, FullPath, StringComparison.OrdinalIgnoreCase)) Then Result.Add(FullPath)
+            Catch
+            End Try
+        Next
+        Return Result
+    End Function
+
+    Private Sub InitializeSelectedData(BackendRoots As IEnumerable(Of String), CacheRoots As IEnumerable(Of String), InitializeBackend As Boolean, InitializeLibrary As Boolean, InitializeSources As Boolean, InitializeCache As Boolean)
+        For Each BackendRoot In BackendRoots
+            Dim ConfigDir = System.IO.Path.Combine(BackendRoot, "config")
+
+            If InitializeBackend Then
+                DeleteMatchingFiles(ConfigDir, "global_config.json")
+                DeleteMatchingFiles(ConfigDir, "omnimix_instances*.db")
             End If
-            Dim ModulesDir = System.IO.Path.Combine(BackendRoot, "modules")
-            If Directory.Exists(ModulesDir) Then
-                For Each ModuleDir In Directory.GetDirectories(ModulesDir)
-                    DirectoryUtils.Delete(System.IO.Path.Combine(ModuleDir, "data"))
-                Next
+            If InitializeLibrary Then
+                DeleteMatchingFiles(ConfigDir, "omnimix_library*.db")
+                Dim LocalFolderData = System.IO.Path.Combine(BackendRoot, "modules", "com.chillpatcher.localfolder", "data")
+                DirectoryUtils.Delete(LocalFolderData)
             End If
-        End If
-        If InitializeCache Then ClearFrontendCache()
+            If InitializeSources Then
+                If Directory.Exists(ConfigDir) Then
+                    For Each ConfigFile In Directory.GetFiles(ConfigDir, "*.json")
+                        If Not String.Equals(System.IO.Path.GetFileName(ConfigFile), "global_config.json", StringComparison.OrdinalIgnoreCase) Then FileUtils.Delete(ConfigFile)
+                    Next
+                End If
+                Dim ModulesDir = System.IO.Path.Combine(BackendRoot, "modules")
+                If Directory.Exists(ModulesDir) Then
+                    For Each ModuleDir In Directory.GetDirectories(ModulesDir)
+                        DirectoryUtils.Delete(System.IO.Path.Combine(ModuleDir, "data"))
+                    Next
+                End If
+            End If
+        Next
+        If InitializeCache Then ClearFrontendCaches(CacheRoots)
     End Sub
 
     Private Shared Sub DeleteMatchingFiles(DirectoryPath As String, Pattern As String)
@@ -809,8 +855,15 @@ Public Class PageOmniMixRight
     End Sub
 
     Private Shared Sub ClearFrontendCache()
-        For Each CacheName In {"Cache", "Download", "TaskTemp", "MyImage"}
-            DirectoryUtils.Delete(System.IO.Path.Combine(PathTemp, CacheName))
+        ClearFrontendCaches({PathTemp})
+    End Sub
+
+    Private Shared Sub ClearFrontendCaches(CacheRoots As IEnumerable(Of String))
+        For Each CacheRoot In CacheRoots
+            If String.IsNullOrWhiteSpace(CacheRoot) Then Continue For
+            For Each CacheName In {"Cache", "Download", "TaskTemp", "MyImage"}
+                DirectoryUtils.Delete(System.IO.Path.Combine(CacheRoot, CacheName))
+            Next
         Next
         Directory.CreateDirectory(System.IO.Path.Combine(PathTemp, "Cache", "Http"))
     End Sub
@@ -1853,6 +1906,7 @@ Public Class PageOmniMixRight
 
     Private Sub RenderPlayback(Instances As List(Of OmniMixPlaybackInstanceInfo), ActiveInstance As OmniMixPlaybackInstanceInfo)
         Instances = If(Instances, New List(Of OmniMixPlaybackInstanceInfo))
+        FrmMain?.UpdateOmniMixInstanceMenu(Instances, If(ActiveInstance Is Nothing, "", ActiveInstance.Id))
         Dim AttachedCount = Instances.Where(Function(Instance) Instance.Attached).Count()
         Dim ServerCount = Instances.Where(Function(Instance) Instance.IsServerManaged).Count()
         LabPlaybackSummary.Text = $"已读取 {Instances.Count} 个播放实例；在线 {AttachedCount} 个，可由后端控制 {ServerCount} 个。"
@@ -2341,11 +2395,19 @@ Public Class PageOmniMixRight
 
         Dim AttachedCount = Instances.Where(Function(Instance) Instance.Attached).Count()
         Dim Games = OmniMixModDeploymentService.GetGameCatalog()
-        LabModulesSummary.Text = $"游戏集成：{Games.Count} 个支持游戏；后端 {Stats.InstanceCount} 个实例，{AttachedCount} 个在线音频端，{Stats.ControllerClients} 个控制端。"
+        Dim UpdateCount = Games.Where(Function(Game)
+                                          Dim ModInfo = OmniMixModDeploymentService.GetPrimaryMod(Game)
+                                          Dim GamePath = OmniMixModDeploymentService.LoadGamePath(Game.Id)
+                                          Dim ModStatus = OmniMixModDeploymentService.CheckModStatus(GamePath, ModInfo)
+                                          Dim FrameworkStatus = If(Game.SupportedFrameworks.Contains("bepinex_5"), OmniMixModDeploymentService.CheckBepInExStatus(GamePath), OmniMixBepInExStatus.NotInstalled)
+                                          Return ModStatus = OmniMixModInstallStatus.NeedsUpdate OrElse FrameworkStatus = OmniMixBepInExStatus.NeedsUpdate
+                                      End Function).Count()
+        LabModulesSummary.Text = $"游戏集成：{Games.Count} 个支持游戏，{AttachedCount} 个在线" & If(UpdateCount > 0, $"，{UpdateCount} 个可更新。", "。")
+        FrmMain?.UpdateOmniMixInstanceMenu(Instances, ActiveInstanceId)
 
-        AddOmniMixSectionHeader(PanGameIntegrationList, "支持的游戏", "选择游戏目录，安装集成文件后再启动游戏。", 0)
+        AddOmniMixSectionHeader(PanGameIntegrationList, "支持的游戏", "点击游戏查看目录、版本和集成操作。", 0)
         For Each Game In Games
-            AddGameIntegrationGameItem(Game)
+            AddGameIntegrationGameItem(Game, Instances)
         Next
 
         If DeploymentLogs.Count > 0 Then
@@ -2361,139 +2423,28 @@ Public Class PageOmniMixRight
             })
         End If
 
-        AddOmniMixSectionHeader(PanGameIntegrationList, "运行实例", "在线的游戏、音频端以及已注册的播放配置。", 12)
-        If Instances.Count = 0 Then
-            PanGameIntegrationList.Children.Add(New MyListItem With {
-                .Title = "暂无游戏集成实例",
-                .Info = "后端在线，但还没有游戏或音频端连接到 OmniMix。",
-                .Height = 50,
-                .PaddingLeft = 8,
-                .Margin = New Thickness(0, 0, 0, 2),
-                .IsScaleAnimationEnabled = False,
-                .Type = MyListItem.CheckType.Clickable
-            })
-            Return
-        End If
-
-        PanGameIntegrationList.Children.Add(New MyListItem With {
-            .Title = "后端实例状态",
-            .Info = "在线游戏或已登记的离线播放实例。",
-            .Height = 1,
-            .PaddingLeft = 8,
-            .Margin = New Thickness(0, 0, 0, 0),
-            .IsScaleAnimationEnabled = False,
-            .Type = MyListItem.CheckType.Clickable
-        })
-
-        For Each Instance In Instances.OrderByDescending(Function(Item) Item.Attached).ThenBy(Function(Item) Item.Id)
-            Dim InfoParts As New List(Of String)
-            InfoParts.Add(If(Instance.Attached, "在线", "离线"))
-            InfoParts.Add(If(Instance.IsServerManaged, "后端控制", "客户端控制"))
-            If Not String.IsNullOrWhiteSpace(Instance.GameName) Then InfoParts.Add(Instance.GameName)
-            If Not String.IsNullOrWhiteSpace(Instance.ModId) Then InfoParts.Add("Mod " & Instance.ModId)
-            If Instance.Attached AndAlso Not Instance.SharedMemoryReady Then InfoParts.Add("共享内存未就绪")
-            InfoParts.Add("队列 " & Instance.QueueCount)
-
-            PanGameIntegrationList.Children.Add(New MyListItem With {
-                .Title = NonEmpty(Instance.Id, Instance.ClientId),
-                .Info = String.Join(" · ", InfoParts),
-                .Height = 52,
-                .PaddingLeft = 8,
-                .Margin = New Thickness(0, 0, 0, 4),
-                .IsScaleAnimationEnabled = False,
-                .Type = MyListItem.CheckType.Clickable,
-                .Tag = Instance
-            })
-        Next
     End Sub
 
-    Private Sub AddGameIntegrationGameItem(Game As OmniMixGameDeclaration)
+    Private Sub AddGameIntegrationGameItem(Game As OmniMixGameDeclaration, Instances As List(Of OmniMixPlaybackInstanceInfo))
         Dim GamePath = OmniMixModDeploymentService.LoadGamePath(Game.Id)
-        Dim IsValidPath = OmniMixModDeploymentService.VerifyGameDirectory(GamePath, Game)
         Dim ModInfo = OmniMixModDeploymentService.GetPrimaryMod(Game)
         Dim BepInExStatus = If(Game.SupportedFrameworks.Contains("bepinex_5"), OmniMixModDeploymentService.CheckBepInExStatus(GamePath), OmniMixBepInExStatus.NotInstalled)
         Dim ModStatus = OmniMixModDeploymentService.CheckModStatus(GamePath, ModInfo)
-        Dim InfoParts As New List(Of String)
-
-        InfoParts.Add(If(IsValidPath, "目录有效", If(String.IsNullOrWhiteSpace(GamePath), "未选择目录", "目录无效")))
-        If Not String.IsNullOrWhiteSpace(GamePath) Then InfoParts.Add(GamePath)
-        If Game.SupportedFrameworks.Contains("bepinex_5") Then InfoParts.Add("BepInEx " & GetBepInExStatusText(BepInExStatus))
-        If ModInfo IsNot Nothing Then
-            InfoParts.Add(ModInfo.Name & " " & If(ModStatus = OmniMixModInstallStatus.Installed, "已安装", "未安装"))
-            If Not OmniMixModDeploymentService.IsPackageAvailable(ModInfo.ArchiveName) Then InfoParts.Add("缺少 " & ModInfo.ArchiveName)
-        End If
-
-        Dim Buttons As New List(Of MyIconButton)
-        Dim SelectButton As New MyIconButton With {
-            .Logo = Logo.IconButtonOpen,
-            .LogoScale = 1.05,
-            .ToolTip = "选择游戏目录",
-            .Tag = Game.Id
-        }
-        AddHandler SelectButton.Click, AddressOf GamePathSelectButton_Click
-        Buttons.Add(SelectButton)
-
-        If Not String.IsNullOrWhiteSpace(GamePath) AndAlso Directory.Exists(GamePath) Then
-            Dim OpenButton As New MyIconButton With {
-                .Logo = Logo.IconButtonList,
-                .LogoScale = 1.0,
-                .ToolTip = "打开游戏目录",
-                .Tag = GamePath
-            }
-            AddHandler OpenButton.Click, AddressOf GamePathOpenButton_Click
-            Buttons.Add(OpenButton)
-        End If
-
-        If Game.SupportedFrameworks.Contains("bepinex_5") Then
-            If BepInExStatus = OmniMixBepInExStatus.Managed Then
-                Dim UninstallButton As New MyIconButton With {
-                    .Logo = Logo.IconButtonDelete,
-                    .LogoScale = 1.0,
-                    .ToolTip = "卸载 OmniMix 管理的 BepInEx",
-                    .Tag = Game.Id
-                }
-                AddHandler UninstallButton.Click, AddressOf BepInExUninstallButton_Click
-                Buttons.Add(UninstallButton)
-            Else
-                Dim InstallButton As New MyIconButton With {
-                    .Logo = Logo.IconButtonSave,
-                    .LogoScale = 1.0,
-                    .ToolTip = If(OmniMixModDeploymentService.IsPackageAvailable("BepInEx_win_x64_5.4.23.5.zip"), "安装 BepInEx", "缺少 BepInEx 压缩包"),
-                    .Tag = Game.Id,
-                    .IsEnabled = IsValidPath AndAlso OmniMixModDeploymentService.IsPackageAvailable("BepInEx_win_x64_5.4.23.5.zip")
-                }
-                AddHandler InstallButton.Click, AddressOf BepInExInstallButton_Click
-                Buttons.Add(InstallButton)
-            End If
-        End If
-
-        If ModInfo IsNot Nothing Then
-            If ModStatus = OmniMixModInstallStatus.Installed Then
-                Dim UninstallModButton As New MyIconButton With {
-                    .Logo = Logo.IconButtonDelete,
-                    .LogoScale = 1.0,
-                    .ToolTip = "卸载 " & ModInfo.Name,
-                    .Tag = Game.Id
-                }
-                AddHandler UninstallModButton.Click, AddressOf ModUninstallButton_Click
-                Buttons.Add(UninstallModButton)
-            Else
-                Dim InstallModButton As New MyIconButton With {
-                    .Logo = Logo.IconButtonSetup,
-                    .LogoScale = 1.0,
-                    .ToolTip = If(OmniMixModDeploymentService.IsPackageAvailable(ModInfo.ArchiveName), "安装 " & ModInfo.Name, "缺少 " & ModInfo.ArchiveName),
-                    .Tag = Game.Id,
-                    .IsEnabled = IsValidPath AndAlso OmniMixModDeploymentService.IsPackageAvailable(ModInfo.ArchiveName)
-                }
-                AddHandler InstallModButton.Click, AddressOf ModInstallButton_Click
-                Buttons.Add(InstallModButton)
-            End If
-        End If
+        Instances = If(Instances, New List(Of OmniMixPlaybackInstanceInfo))
+        Dim IsOnline = Instances.Any(Function(Instance)
+                                         If Not Instance.Attached Then Return False
+                                         If ModInfo IsNot Nothing AndAlso String.Equals(Instance.Id, OmniMixModDeploymentService.GetExpectedInstanceId(GamePath, ModInfo), StringComparison.OrdinalIgnoreCase) Then Return True
+                                         If ModInfo IsNot Nothing AndAlso String.Equals(Instance.ModId, ModInfo.Id, StringComparison.OrdinalIgnoreCase) Then Return True
+                                         Return String.Equals(Instance.GameName, Game.Name, StringComparison.OrdinalIgnoreCase) OrElse
+                                             (Not String.IsNullOrWhiteSpace(Instance.GameName) AndAlso Instance.GameName.IndexOf(Game.Name, StringComparison.OrdinalIgnoreCase) >= 0)
+                                     End Function)
+        Dim HasUpdate = ModStatus = OmniMixModInstallStatus.NeedsUpdate OrElse BepInExStatus = OmniMixBepInExStatus.NeedsUpdate
+        Dim StatusText = If(IsOnline, "🟢 在线", "🔴 离线") & If(HasUpdate, " · 有可用更新", "")
 
         Dim Item As New MyListItem With {
             .Title = Game.Name,
-            .Info = String.Join(" · ", InfoParts),
-            .Height = 64,
+            .Info = StatusText,
+            .Height = 54,
             .PaddingLeft = 8,
             .Margin = New Thickness(0, 0, 0, 6),
             .Logo = Logo.IconButtonSetup,
@@ -2544,8 +2495,9 @@ Public Class PageOmniMixRight
         Dim InfoParts As New List(Of String)
         InfoParts.Add(If(IsValidPath, "目录有效", If(String.IsNullOrWhiteSpace(GamePath), "未选择目录", "目录无效")))
         If Not String.IsNullOrWhiteSpace(GamePath) Then InfoParts.Add(GamePath)
+        If IsValidPath Then InfoParts.Add("游戏版本 " & OmniMixModDeploymentService.GetGameVersion(GamePath, Game))
         If Game.SupportedFrameworks.Contains("bepinex_5") Then InfoParts.Add("BepInEx " & GetBepInExStatusText(BepInExStatus))
-        If ModInfo IsNot Nothing Then InfoParts.Add(ModInfo.Name & " " & If(ModStatus = OmniMixModInstallStatus.Installed, "已安装", "未安装"))
+        If ModInfo IsNot Nothing Then InfoParts.Add(ModInfo.Name & " " & GetModStatusText(ModStatus))
 
         LabModuleUiSummary.Text = String.Join(" · ", InfoParts)
         PanModuleUi.Children.Add(New MyListItem With {
@@ -2570,7 +2522,8 @@ Public Class PageOmniMixRight
                 AddGameDetailAction(PanModuleUi, "卸载 BepInEx", "移除 OmniMix 管理的 BepInEx 文件。", Logo.IconButtonDelete, "卸载 BepInEx", Game.Id, AddressOf BepInExUninstallButton_Click, True, MyIconButton.Themes.Red)
             Else
                 Dim CanInstallBepInEx = IsValidPath AndAlso OmniMixModDeploymentService.IsPackageAvailable("BepInEx_win_x64_5.4.23.5.zip")
-                AddGameDetailAction(PanModuleUi, "安装 BepInEx", If(CanInstallBepInEx, "安装 OmniMix 需要的 BepInEx 框架。", "需要有效游戏目录和 BepInEx 压缩包。"), Logo.IconButtonSave, "安装 BepInEx", Game.Id, AddressOf BepInExInstallButton_Click, CanInstallBepInEx)
+                Dim BepInExAction = If(BepInExStatus = OmniMixBepInExStatus.NeedsUpdate, "更新 BepInEx", "安装 BepInEx")
+                AddGameDetailAction(PanModuleUi, BepInExAction, If(CanInstallBepInEx, BepInExAction & " 到当前随附版本。", "需要有效游戏目录和 BepInEx 压缩包。"), Logo.IconButtonSave, BepInExAction, Game.Id, AddressOf BepInExInstallButton_Click, CanInstallBepInEx)
             End If
         End If
 
@@ -2580,7 +2533,8 @@ Public Class PageOmniMixRight
             Else
                 Dim CanInstallMod = IsValidPath AndAlso OmniMixModDeploymentService.IsPackageAvailable(ModInfo.ArchiveName) AndAlso
                     (Not ModInfo.UsesFramework OrElse BepInExStatus <> OmniMixBepInExStatus.NotInstalled)
-                AddGameDetailAction(PanModuleUi, "安装 " & ModInfo.Name, If(CanInstallMod, "写入 Mod 并注册后端实例配置。", "需要有效目录、Mod 包以及必要框架。"), Logo.IconButtonSetup, "安装 " & ModInfo.Name, Game.Id, AddressOf ModInstallButton_Click, CanInstallMod)
+                Dim ModAction = If(ModStatus = OmniMixModInstallStatus.NeedsUpdate, "更新 " & ModInfo.Name, "安装 " & ModInfo.Name)
+                AddGameDetailAction(PanModuleUi, ModAction, If(CanInstallMod, "写入当前随附版本并注册后端实例配置。", "需要有效目录、Mod 包以及必要框架。"), Logo.IconButtonSetup, ModAction, Game.Id, AddressOf ModInstallButton_Click, CanInstallMod)
             End If
         End If
 
@@ -2776,7 +2730,7 @@ Public Class PageOmniMixRight
 
             Dim GamePath = OmniMixModDeploymentService.LoadGamePath(Game.Id)
             If Not OmniMixModDeploymentService.VerifyGameDirectory(GamePath, Game) Then Continue For
-            If OmniMixModDeploymentService.CheckModStatus(GamePath, ModInfo) <> OmniMixModInstallStatus.Installed Then Continue For
+            If OmniMixModDeploymentService.CheckModStatus(GamePath, ModInfo) = OmniMixModInstallStatus.NotInstalled Then Continue For
 
             Dim ExpectedId = OmniMixModDeploymentService.EnsureRuntimeBinding(GamePath, ModInfo, BackendPort, Logs)
             If String.IsNullOrWhiteSpace(ExpectedId) Then Continue For
@@ -2862,8 +2816,21 @@ Public Class PageOmniMixRight
         Select Case Status
             Case OmniMixBepInExStatus.Managed
                 Return "已由 OmniMix 管理"
+            Case OmniMixBepInExStatus.NeedsUpdate
+                Return "需要更新"
             Case OmniMixBepInExStatus.Unmanaged
                 Return "已安装（非 OmniMix 管理）"
+            Case Else
+                Return "未安装"
+        End Select
+    End Function
+
+    Private Shared Function GetModStatusText(Status As OmniMixModInstallStatus) As String
+        Select Case Status
+            Case OmniMixModInstallStatus.Installed
+                Return "已安装"
+            Case OmniMixModInstallStatus.NeedsUpdate
+                Return "需要更新"
             Case Else
                 Return "未安装"
         End Select
