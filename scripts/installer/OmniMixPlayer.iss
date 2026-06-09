@@ -40,9 +40,36 @@ MinVersion=10.0.10240
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "chinesesimplified"; MessagesFile: "{#SourcePath}\languages\ChineseSimplified.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+[CustomMessages]
+english.CleanupPageTitle=Optional cleanup
+english.CleanupPageDescription=Choose data left by previous OmniMixPlayer installations
+english.CleanupPageSubCaption=All options are disabled by default. Only select data you explicitly want to remove.
+english.CleanupAudioCache=Clear rebuildable audio and image caches
+english.CleanupGuiSettings=Reset desktop GUI preferences (theme, volume, shortcuts, window position and saved game paths)
+english.CleanupBackendData=Reset backend configuration, music library and playback instances
+english.CleanupLoginData=Remove music service sessions stored in default locations (NetEase, QQ Music, Bilibili and Spotify)
+english.CleanupIntegrationData=Remove game integration records, downloaded mod copies and backups (installed game mods remain, but automatic uninstall/restore may no longer work)
+english.CleanupConfirm=The selected cleanup options may remove settings, library data, login sessions or integration backups.%n%nThis operation cannot be undone. Continue?
+english.CleanupOldInstall=Previous backend directory detected:
+english.CleanupNoOldInstall=No previous backend directory was detected. Cleanup will apply to the selected installation directory and user profile data.
+english.CleanupLogPrefix=Optional cleanup:
+chinesesimplified.CleanupPageTitle=可选清理
+chinesesimplified.CleanupPageDescription=选择需要清理的旧版 OmniMixPlayer 数据
+chinesesimplified.CleanupPageSubCaption=所有选项默认不勾选。请只选择你明确需要删除的数据。
+chinesesimplified.CleanupAudioCache=清理可重新生成的音频与图片缓存
+chinesesimplified.CleanupGuiSettings=重置桌面 GUI 偏好（主题、音量、快捷键、窗口位置和已保存的游戏路径）
+chinesesimplified.CleanupBackendData=重置后端配置、曲库和播放实例
+chinesesimplified.CleanupLoginData=删除默认位置中的音乐源登录状态（网易云、QQ 音乐、Bilibili 和 Spotify）
+chinesesimplified.CleanupIntegrationData=删除游戏集成记录、已下载的 Mod 副本和备份（不会卸载游戏中的 Mod，但之后可能无法自动卸载或恢复）
+chinesesimplified.CleanupConfirm=所选清理项可能删除设置、曲库、登录状态或游戏集成备份。%n%n此操作无法撤销，是否继续？
+chinesesimplified.CleanupOldInstall=检测到旧后端目录：
+chinesesimplified.CleanupNoOldInstall=未检测到旧后端目录。清理将作用于当前选择的安装目录和用户配置目录。
+chinesesimplified.CleanupLogPrefix=可选清理：
 
 [Files]
 ; ═══ 所有可执行文件和 DLL (排除 VC 运行库，它单独处理) ═══
@@ -84,14 +111,250 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 
 [UninstallRun]
 ; 卸载前停止并删除服务
-Filename: "sc.exe"; Parameters: "stop {#MyServiceName}"; Flags: runhidden
-Filename: "sc.exe"; Parameters: "delete {#MyServiceName}"; Flags: runhidden
+Filename: "sc.exe"; Parameters: "stop {#MyServiceName}"; Flags: runhidden; RunOnceId: "StopOmniMixPlayerBackend"
+Filename: "sc.exe"; Parameters: "delete {#MyServiceName}"; Flags: runhidden; RunOnceId: "DeleteOmniMixPlayerBackend"
 
 ; ═════════════════════════════════════════════════════════════════════════════
 ; [Code] 部分 — Pascal 脚本
 ; ═════════════════════════════════════════════════════════════════════════════
 
 [Code]
+
+var
+  CleanupPage: TInputOptionWizardPage;
+  OldInstallDir: string;
+  CleanupConfirmed: Boolean;
+
+const
+  ServiceRegistryPath = 'SYSTEM\CurrentControlSet\Services\{#MyServiceName}';
+  UninstallRegistryPath = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}_is1';
+
+// ── 字符串和路径辅助函数 ──
+function StripTrailingSlash(Value: string): string;
+begin
+  Result := Trim(Value);
+  while (Length(Result) > 3) and
+        ((Result[Length(Result)] = '\') or (Result[Length(Result)] = '/')) do
+    Delete(Result, Length(Result), 1);
+end;
+
+function ExtractExecutablePath(ImagePath: string): string;
+var
+  EndPos: Integer;
+  LowerPath: string;
+begin
+  Result := '';
+  ImagePath := Trim(ImagePath);
+  if ImagePath = '' then
+    Exit;
+
+  if ImagePath[1] = '"' then
+  begin
+    Delete(ImagePath, 1, 1);
+    EndPos := Pos('"', ImagePath);
+    if EndPos > 0 then
+      Result := Copy(ImagePath, 1, EndPos - 1)
+    else
+      Result := ImagePath;
+  end
+  else
+  begin
+    LowerPath := Lowercase(ImagePath);
+    EndPos := Pos('.exe', LowerPath);
+    if EndPos > 0 then
+      Result := Copy(ImagePath, 1, EndPos + 3)
+    else
+      Result := ImagePath;
+  end;
+
+  Result := RemoveQuotes(Trim(Result));
+end;
+
+function ReadServiceInstallDir(): string;
+var
+  ImagePath: string;
+  BackendPath: string;
+begin
+  Result := '';
+  ImagePath := '';
+  if IsWin64 then
+    RegQueryStringValue(HKLM64, ServiceRegistryPath, 'ImagePath', ImagePath);
+  if ImagePath = '' then
+    RegQueryStringValue(HKLM, ServiceRegistryPath, 'ImagePath', ImagePath);
+
+  BackendPath := ExtractExecutablePath(ImagePath);
+  if BackendPath <> '' then
+    Result := StripTrailingSlash(ExtractFileDir(BackendPath));
+end;
+
+function ReadRegisteredInstallDir(): string;
+begin
+  Result := '';
+  if IsWin64 then
+    RegQueryStringValue(HKLM64, UninstallRegistryPath, 'InstallLocation', Result);
+  if Result = '' then
+    RegQueryStringValue(HKLM, UninstallRegistryPath, 'InstallLocation', Result);
+  if Result = '' then
+    RegQueryStringValue(HKCU, UninstallRegistryPath, 'InstallLocation', Result);
+  Result := StripTrailingSlash(RemoveQuotes(Result));
+end;
+
+function IsKnownInstallDir(const BaseDir: string): Boolean;
+var
+  Normalized: string;
+begin
+  Normalized := StripTrailingSlash(BaseDir);
+  Result :=
+    (Length(Normalized) > 3) and
+    (
+      FileExists(AddBackslash(Normalized) + '{#MyAppBackendName}') or
+      FileExists(AddBackslash(Normalized) + '{#MyAppExeName}') or
+      DirExists(AddBackslash(Normalized) + 'config') or
+      DirExists(AddBackslash(Normalized) + 'modules')
+    );
+end;
+
+procedure DeleteFileLogged(const FileName: string);
+begin
+  if FileExists(FileName) then
+  begin
+    if DeleteFile(FileName) then
+      Log(CustomMessage('CleanupLogPrefix') + ' deleted file ' + FileName)
+    else
+      Log(CustomMessage('CleanupLogPrefix') + ' failed to delete file ' + FileName);
+  end;
+end;
+
+procedure DeleteTreeLogged(const DirName: string);
+begin
+  if DirExists(DirName) then
+  begin
+    if DelTree(DirName, True, True, True) then
+      Log(CustomMessage('CleanupLogPrefix') + ' deleted directory ' + DirName)
+    else
+      Log(CustomMessage('CleanupLogPrefix') + ' failed to delete directory ' + DirName);
+  end;
+end;
+
+procedure DeleteFileOrTreeLogged(const Path: string);
+begin
+  DeleteFileLogged(Path);
+  DeleteTreeLogged(Path);
+end;
+
+procedure CleanupInstallLocation(const BaseDir: string);
+var
+  ModulesDir: string;
+begin
+  if not IsKnownInstallDir(BaseDir) then
+    Exit;
+
+  ModulesDir := AddBackslash(StripTrailingSlash(BaseDir)) + 'modules\';
+
+  if CleanupPage.Values[0] then
+  begin
+    DeleteTreeLogged(ModulesDir + 'com.chillpatcher.qqmusic\data\audio_cache');
+    DeleteTreeLogged(ModulesDir + 'com.chillpatcher.spotify\data\librespot-cache');
+  end;
+
+  if CleanupPage.Values[2] then
+    DeleteTreeLogged(AddBackslash(StripTrailingSlash(BaseDir)) + 'config');
+
+  if CleanupPage.Values[3] then
+  begin
+    DeleteFileLogged(ModulesDir + 'com.chillpatcher.qqmusic\data\qqmusic_cookie.json');
+    DeleteFileLogged(ModulesDir + 'com.chillpatcher.bilibili\data\bilibili_session.json');
+    DeleteFileLogged(ModulesDir + 'com.chillpatcher.spotify\data\spotify_session.json');
+  end;
+end;
+
+procedure RunOptionalCleanup();
+var
+  CurrentInstallDir: string;
+  GuiDataDir: string;
+begin
+  CurrentInstallDir := StripTrailingSlash(WizardDirValue());
+
+  CleanupInstallLocation(OldInstallDir);
+  if CompareText(OldInstallDir, CurrentInstallDir) <> 0 then
+    CleanupInstallLocation(CurrentInstallDir);
+
+  GuiDataDir := ExpandConstant('{userappdata}\com.omnimixplayer\omnimix_gui');
+
+  if CleanupPage.Values[0] then
+  begin
+    DeleteTreeLogged(AddBackslash(GetEnv('TEMP')) + 'chillpatcher_audio_cache');
+    DeleteFileLogged(AddBackslash(GuiDataDir) + 'libCachedImageData.json');
+  end;
+
+  if CleanupPage.Values[1] then
+    DeleteFileLogged(AddBackslash(GuiDataDir) + 'shared_preferences.json');
+
+  if CleanupPage.Values[3] then
+    DeleteFileOrTreeLogged(ExpandConstant('{localappdata}\go-musicfox\cookie'));
+
+  if CleanupPage.Values[4] then
+    DeleteTreeLogged(ExpandConstant('{localappdata}\OmniMixPlayer\mod_manager'));
+end;
+
+procedure InitializeWizard();
+var
+  PageSubCaption: string;
+begin
+  CleanupConfirmed := False;
+  OldInstallDir := ReadServiceInstallDir();
+  if OldInstallDir = '' then
+    OldInstallDir := ReadRegisteredInstallDir();
+
+  if OldInstallDir <> '' then
+    PageSubCaption :=
+      CustomMessage('CleanupPageSubCaption') + #13#10 + #13#10 +
+      CustomMessage('CleanupOldInstall') + #13#10 + OldInstallDir
+  else
+    PageSubCaption :=
+      CustomMessage('CleanupPageSubCaption') + #13#10 + #13#10 +
+      CustomMessage('CleanupNoOldInstall');
+
+  CleanupPage := CreateInputOptionPage(
+    wpSelectDir,
+    CustomMessage('CleanupPageTitle'),
+    CustomMessage('CleanupPageDescription'),
+    PageSubCaption,
+    False,
+    False
+  );
+  CleanupPage.Add(CustomMessage('CleanupAudioCache'));
+  CleanupPage.Add(CustomMessage('CleanupGuiSettings'));
+  CleanupPage.Add(CustomMessage('CleanupBackendData'));
+  CleanupPage.Add(CustomMessage('CleanupLoginData'));
+  CleanupPage.Add(CustomMessage('CleanupIntegrationData'));
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  HasDestructiveSelection: Boolean;
+begin
+  Result := True;
+  if CurPageID <> CleanupPage.ID then
+    Exit;
+
+  HasDestructiveSelection :=
+    CleanupPage.Values[1] or
+    CleanupPage.Values[2] or
+    CleanupPage.Values[3] or
+    CleanupPage.Values[4];
+
+  if HasDestructiveSelection and not CleanupConfirmed then
+  begin
+    Result :=
+      MsgBox(
+        CustomMessage('CleanupConfirm'),
+        mbConfirmation,
+        MB_YESNO
+      ) = IDYES;
+    CleanupConfirmed := Result;
+  end;
+end;
 
 // ── 检查 VC++ 2015-2022 x64 运行库是否已安装 ──
 function IsVCRedistInstalled(): Boolean;
@@ -215,6 +478,9 @@ begin
 
   // 再次确认所有进程已停止
   Sleep(1000);
+
+  // 4. 执行用户在向导中明确选择的清理项
+  RunOptionalCleanup();
 end;
 
 // ── 安装完成后重新创建服务 ──
