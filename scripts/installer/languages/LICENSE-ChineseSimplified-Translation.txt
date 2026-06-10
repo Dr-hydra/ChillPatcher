@@ -1,3 +1,11 @@
+Third-party license notice
+
+This license applies only to ChineseSimplified.isl, sourced from:
+https://github.com/kira-96/Inno-Setup-Chinese-Simplified-Translation
+
+ChillPatcher remains licensed under the GNU General Public License v3.0.
+See the repository root LICENSE file for the main project's license.
+
 MIT License
 
 Copyright (c) 2019 - 2020 kirakira
