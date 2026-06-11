@@ -21,8 +21,10 @@ Public Class PageOmniMixLeft
     Private ReadOnly LibrarySourceItems As New Dictionary(Of String, MyListItem)(StringComparer.OrdinalIgnoreCase)
     Private ReadOnly PlayerAutoRefreshTimer As New System.Windows.Threading.DispatcherTimer With {.Interval = TimeSpan.FromSeconds(1)}
     Private ReadOnly SeekDebounceTimer As New System.Windows.Threading.DispatcherTimer With {.Interval = TimeSpan.FromMilliseconds(250)}
+    Private Shared ReadOnly CoverHttpClient As New System.Net.Http.HttpClient()
     Private IsRefreshingPlayer As Boolean = False
     Private CurrentCoverSource As String = ""
+    Private CoverLoadSerial As Integer = 0
     Private PendingSeekPosition As Double = -1
     Private IsSendingSeek As Boolean = False
 
@@ -284,7 +286,7 @@ Public Class PageOmniMixLeft
         Return ""
     End Function
 
-    Private Sub SetCoverImage(Source As String)
+    Private Async Sub SetCoverImage(Source As String)
         If String.IsNullOrWhiteSpace(Source) Then
             ClearCoverImage()
             Return
@@ -300,19 +302,55 @@ Public Class PageOmniMixLeft
                 Return
             End If
 
-            Dim Bitmap As New BitmapImage()
-            Bitmap.BeginInit()
-            Bitmap.CacheOption = BitmapCacheOption.OnLoad
-            Bitmap.UriSource = SourceUri
-            Bitmap.EndInit()
+            Dim LoadSerial = Threading.Interlocked.Increment(CoverLoadSerial)
+            CurrentCoverSource = NormalizedSource
+
+            Dim Bitmap = Await LoadCoverBitmapAsync(SourceUri)
+            If LoadSerial <> CoverLoadSerial OrElse Not String.Equals(CurrentCoverSource, NormalizedSource, StringComparison.Ordinal) Then Return
+
             ImgLeftPlaybackCover.Source = Bitmap
             ImgLeftPlaybackCover.Visibility = Visibility.Visible
             PathLeftPlaybackCoverPlaceholder.Visibility = Visibility.Collapsed
-            CurrentCoverSource = NormalizedSource
-        Catch
+        Catch ex As Exception
+            Logger.Warn(ex, $"加载播放封面失败（{Source}）")
             ClearCoverImage()
         End Try
     End Sub
+
+    Private Shared Async Function LoadCoverBitmapAsync(SourceUri As Uri) As Task(Of BitmapImage)
+        If SourceUri.Scheme = Uri.UriSchemeHttp OrElse SourceUri.Scheme = Uri.UriSchemeHttps Then
+            Dim Bytes = Await CoverHttpClient.GetByteArrayAsync(SourceUri)
+            Return CreateFrozenBitmap(Bytes)
+        End If
+
+        If SourceUri.IsFile Then
+            Dim Bytes = Await Task.Run(Function() File.ReadAllBytes(SourceUri.LocalPath))
+            Return CreateFrozenBitmap(Bytes)
+        End If
+
+        Dim Bitmap As New BitmapImage()
+        Bitmap.BeginInit()
+        Bitmap.CacheOption = BitmapCacheOption.OnLoad
+        Bitmap.CreateOptions = BitmapCreateOptions.IgnoreColorProfile
+        Bitmap.UriSource = SourceUri
+        Bitmap.EndInit()
+        Bitmap.Freeze()
+        Return Bitmap
+    End Function
+
+    Private Shared Function CreateFrozenBitmap(Bytes As Byte()) As BitmapImage
+        If Bytes Is Nothing OrElse Bytes.Length = 0 Then Throw New InvalidDataException("图片数据为空。")
+        Using Stream As New MemoryStream(Bytes)
+            Dim Bitmap As New BitmapImage()
+            Bitmap.BeginInit()
+            Bitmap.CacheOption = BitmapCacheOption.OnLoad
+            Bitmap.CreateOptions = BitmapCreateOptions.IgnoreColorProfile
+            Bitmap.StreamSource = Stream
+            Bitmap.EndInit()
+            Bitmap.Freeze()
+            Return Bitmap
+        End Using
+    End Function
 
     Private Function ResolveImageUri(Source As String) As Uri
         Dim Trimmed = Source.Trim()
@@ -329,6 +367,7 @@ Public Class PageOmniMixLeft
     End Function
 
     Private Sub ClearCoverImage()
+        Threading.Interlocked.Increment(CoverLoadSerial)
         CurrentCoverSource = ""
         ImgLeftPlaybackCover.Source = Nothing
         ImgLeftPlaybackCover.Visibility = Visibility.Collapsed
