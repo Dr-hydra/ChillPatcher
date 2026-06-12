@@ -8,7 +8,7 @@ The VB.NET UI layer is maintained alongside [QING.UIKIT](https://github.com/Dr-h
 
 ## Status
 
-Version: `3.0.6`
+Version: `3.0.7`
 
 Primary artifact:
 
@@ -16,7 +16,13 @@ Primary artifact:
 OmniMixPlayer.Gui.Vbnet.exe
 ```
 
-The current release target is a self-contained single-file Windows executable. It can be placed next to an existing OmniMix backend distribution and started directly.
+The executable remains the primary local build artifact and is embedded into the full OmniMix packages. Starting with version 3.0.7, GitHub Releases no longer publish the framework-dependent or self-contained frontend executable as standalone assets.
+
+Published release packages:
+
+- `OmniMixPlayer_V{version}_VBNet_portable.zip`: complete self-contained portable package.
+- `OmniMixPlayer_V{version}_VBNet_full-framework-dependent.zip`: complete framework-dependent package.
+- `OmniMixPlayer_V{version}_VBNet_installer.exe`: complete Windows installer.
 
 ## What This Frontend Does
 
@@ -54,7 +60,7 @@ Install the .NET SDK used by the project, then run:
 dotnet build "OmniMixPlayer/OmniMixPlayer.sln" -c Debug -v minimal
 ```
 
-Single-file publish:
+Local single-file publish:
 
 ```powershell
 dotnet publish "OmniMixPlayer/gui_vbnet/OmniMixFrontend/OmniMixFrontend.vbproj" `
@@ -76,7 +82,7 @@ OmniMixPlayer/bin/GuiVbnetSingle/OmniMixPlayer.Gui.Vbnet.exe
 
 ## Deployment
 
-Copy the single executable into the existing OmniMix distribution directory, for example:
+For local development or compatibility testing, copy the generated executable into an existing OmniMix distribution directory, for example:
 
 ```text
 E:\FH6\ChillPatcher\OmniMixPlayer.Gui.Vbnet.exe

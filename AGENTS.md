@@ -31,7 +31,8 @@ This repository is the VB.NET/WPF compatible frontend for OmniMix. Treat it as a
 ## Release Packaging
 
 - The primary local artifact is `OmniMixPlayer.Gui.Vbnet.exe`.
-- Frontend-only releases may publish the VB.NET executable by itself.
+- Starting with `3.0.7`, GitHub Releases must not publish the framework-dependent or self-contained VB.NET executable as standalone assets.
+- Public releases should contain only the complete portable package, complete framework-dependent package, and Windows installer unless a later packaging decision explicitly changes this rule.
 - Full-package releases should be based on the upstream `playerbuild.zip`, then replace the upstream desktop Flutter GUI with `OmniMixPlayer.Gui.Vbnet.exe`.
 - When creating a full package, preserve upstream backend/runtime assets such as:
   - `OmniMixPlayer.Backend.exe`

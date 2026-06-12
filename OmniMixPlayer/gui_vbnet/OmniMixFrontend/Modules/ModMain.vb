@@ -546,7 +546,8 @@ EndHint:
     Public Sub Feedback(Optional ShowMsgbox As Boolean = True, Optional ForceOpenLog As Boolean = False)
         On Error Resume Next
         FeedbackInfo()
-        If ForceOpenLog OrElse (ShowMsgbox AndAlso MyMsgBox("若你在汇报一个 Bug，请点击 打开文件夹 按钮，并上传 Log(1~5).txt 中包含错误信息的文件。", "反馈提交提醒", "打开文件夹", "不需要") = 1) Then
+        If ForceOpenLog OrElse (ShowMsgbox AndAlso MyMsgBox("若你在汇报一个 Bug，请上传 Log(1~5).txt 中包含错误信息的文件。" & vbCrLf &
+                                                           "你也可以加入 QQ 群 851586605 进行反馈。", "反馈提交提醒", "打开文件夹", "不需要") = 1) Then
             OpenExplorer(PathExeFolder & "OmniMixPlayer\Log1.txt")
         End If
         OpenWebsite("https://github.com/Dr-hydra/OmniMix-VBNet-Frontend/issues/")

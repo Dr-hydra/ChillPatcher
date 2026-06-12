@@ -8,7 +8,7 @@
 
 ## 当前状态
 
-版本：`3.0.6`
+版本：`3.0.7`
 
 主要产物：
 
@@ -16,7 +16,13 @@
 OmniMixPlayer.Gui.Vbnet.exe
 ```
 
-当前发布目标是 Windows 自包含单文件 exe，可以直接放进已有 OmniMix 后端目录中运行。
+该 EXE 仍是主要的本地构建产物，并会被装入完整 OmniMix 发行包。从 3.0.7 开始，GitHub Release 不再单独发布框架依赖版和自包含版前端 EXE。
+
+正式发布保留以下三个包：
+
+- `OmniMixPlayer_V{version}_VBNet_portable.zip`：完整自包含便携包。
+- `OmniMixPlayer_V{version}_VBNet_full-framework-dependent.zip`：完整框架依赖包。
+- `OmniMixPlayer_V{version}_VBNet_installer.exe`：完整 Windows 安装器。
 
 ## 主要功能
 
@@ -54,10 +60,10 @@ OmniMixPlayer.Gui.Vbnet.exe
 dotnet build "OmniMixPlayer/OmniMixPlayer.sln" -c Debug -v minimal
 ```
 
-发布单文件 exe：
+本地发布单文件 EXE：
 
 ```powershell
-dotnet publish "OmniMixPlayer/gui_vbnet/Plain Craft Launcher 2/Plain Craft Launcher 2.vbproj" `
+dotnet publish "OmniMixPlayer/gui_vbnet/OmniMixFrontend/OmniMixFrontend.vbproj" `
   -c Debug `
   -o "OmniMixPlayer/bin/GuiVbnetSingle" `
   /p:PublishSingleFile=true `
@@ -76,7 +82,7 @@ OmniMixPlayer/bin/GuiVbnetSingle/OmniMixPlayer.Gui.Vbnet.exe
 
 ## 部署
 
-把单文件 exe 放入已有 OmniMix 分发目录，例如：
+本地开发或兼容性测试时，可以把生成的 EXE 放入已有 OmniMix 分发目录，例如：
 
 ```text
 E:\FH6\ChillPatcher\OmniMixPlayer.Gui.Vbnet.exe

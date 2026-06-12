@@ -1,6 +1,9 @@
 ﻿Public Class PclLogger
     Inherits FileLogger
 
+    Private Const FeedbackPrompt As String = "是否要反馈此问题？反馈时请附上日志文件。" & vbCrLf &
+                                             "你可以前往 GitHub Issues，或加入 QQ 群 851586605 进行反馈。"
+
     Private Shared Function FilterAccessToken(Raw As String, FilterChar As Char) As String
         If Raw Is Nothing Then Return Nothing
         Return Raw.RegexReplace("(?i)(access[_-]?token[""'\s:=]+)[^""'\s&]+", Function(m) m.Groups(1).Value & New String(FilterChar, 8))
@@ -38,13 +41,13 @@
             Case LogBehavior.Alert
                 MyMsgBox(DetailText, "错误", IsWarn:=True)
             Case LogBehavior.AlertThenFeedback
-                If MyMsgBox(DetailText & vbCrLf & vbCrLf & "是否反馈此问题？如果不反馈，这个问题可能永远无法得到解决！", "错误", "反馈", "取消", IsWarn:=True) = 1 Then Feedback(False, True)
+                If MyMsgBox(DetailText & vbCrLf & vbCrLf & FeedbackPrompt, "错误", "进行反馈", "暂不反馈", IsWarn:=True) = 1 Then Feedback(False, True)
             Case LogBehavior.AlertThenCrash
                 Static FirstTrigger As Boolean = True
                 If FirstTrigger Then
                     '首次触发
                     FirstTrigger = False
-                    If MsgBox(DetailText & vbCrLf & vbCrLf & "是否反馈此问题？如果不反馈，这个问题可能永远无法得到解决！", MsgBoxStyle.Critical + MsgBoxStyle.YesNo, "错误") = MsgBoxResult.Yes Then Feedback(False, True)
+                    If MsgBox(DetailText & vbCrLf & vbCrLf & FeedbackPrompt, MsgBoxStyle.Critical + MsgBoxStyle.YesNo, "错误") = MsgBoxResult.Yes Then Feedback(False, True)
                 Else
                     '多次触发，直接使程序崩溃（这通常代表着在其他线程循环触发严重异常）
                     Thread.Sleep(2000)

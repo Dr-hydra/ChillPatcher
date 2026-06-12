@@ -2,6 +2,7 @@ Imports System.Globalization
 Imports System.Text.Json
 
 Public Class PageOmniMixLeft
+    Implements IDispatcherUnhandledException
 
     Private CurrentPage As FormMain.PageType = FormMain.PageType.Launch
     Private CurrentRight As PageOmniMixRight = Nothing
@@ -317,7 +318,7 @@ Public Class PageOmniMixLeft
         End Try
     End Sub
 
-    Private Shared Async Function LoadCoverBitmapAsync(SourceUri As Uri) As Task(Of BitmapImage)
+    Private Shared Async Function LoadCoverBitmapAsync(SourceUri As Uri) As Task(Of BitmapSource)
         If SourceUri.Scheme = Uri.UriSchemeHttp OrElse SourceUri.Scheme = Uri.UriSchemeHttps Then
             Dim Bytes = Await CoverHttpClient.GetByteArrayAsync(SourceUri)
             Return CreateFrozenBitmap(Bytes)
@@ -328,40 +329,59 @@ Public Class PageOmniMixLeft
             Return CreateFrozenBitmap(Bytes)
         End If
 
-        Dim Bitmap As New BitmapImage()
-        Bitmap.BeginInit()
-        Bitmap.CacheOption = BitmapCacheOption.OnLoad
-        Bitmap.CreateOptions = BitmapCreateOptions.IgnoreColorProfile
-        Bitmap.UriSource = SourceUri
-        Bitmap.EndInit()
-        Bitmap.Freeze()
-        Return Bitmap
+        If String.Equals(SourceUri.Scheme, "pack", StringComparison.OrdinalIgnoreCase) Then
+            Dim Resource = System.Windows.Application.GetResourceStream(SourceUri)
+            If Resource Is Nothing Then Throw New FileNotFoundException($"未找到图片资源：{SourceUri}")
+            Using Resource.Stream
+                Using Buffer As New MemoryStream()
+                    Resource.Stream.CopyTo(Buffer)
+                    Return CreateFrozenBitmap(Buffer.ToArray())
+                End Using
+            End Using
+        End If
+
+        If String.Equals(SourceUri.Scheme, "data", StringComparison.OrdinalIgnoreCase) Then
+            Return CreateFrozenBitmap(ReadDataUriBytes(SourceUri))
+        End If
+
+        Throw New NotSupportedException($"不支持从 {SourceUri.Scheme} URI 加载播放封面。")
     End Function
 
-    Private Shared Function CreateFrozenBitmap(Bytes As Byte()) As BitmapImage
+    Private Shared Function CreateFrozenBitmap(Bytes As Byte()) As BitmapSource
         If Bytes Is Nothing OrElse Bytes.Length = 0 Then Throw New InvalidDataException("图片数据为空。")
         Using Stream As New MemoryStream(Bytes)
-            Dim Bitmap As New BitmapImage()
-            Bitmap.BeginInit()
-            Bitmap.CacheOption = BitmapCacheOption.OnLoad
-            Bitmap.CreateOptions = BitmapCreateOptions.IgnoreColorProfile
-            Bitmap.StreamSource = Stream
-            Bitmap.EndInit()
+            Dim Decoder = BitmapDecoder.Create(Stream, BitmapCreateOptions.IgnoreColorProfile, BitmapCacheOption.OnLoad)
+            If Decoder.Frames.Count = 0 Then Throw New InvalidDataException("图片不包含可解码的帧。")
+            Dim Bitmap As New WriteableBitmap(Decoder.Frames(0))
             Bitmap.Freeze()
             Return Bitmap
         End Using
     End Function
 
+    Private Shared Function ReadDataUriBytes(SourceUri As Uri) As Byte()
+        Dim Source = SourceUri.OriginalString
+        Dim Separator = Source.IndexOf(","c)
+        If Separator < 0 Then Throw New FormatException("无效的 data URI。")
+
+        Dim Metadata = Source.Substring(0, Separator)
+        Dim Payload = Uri.UnescapeDataString(Source.Substring(Separator + 1))
+        If Metadata.EndsWith(";base64", StringComparison.OrdinalIgnoreCase) Then
+            Return Convert.FromBase64String(Payload)
+        End If
+        Return Encoding.UTF8.GetBytes(Payload)
+    End Function
+
     Private Function ResolveImageUri(Source As String) As Uri
         Dim Trimmed = Source.Trim()
+        Dim LocalPath = If(IO.Path.IsPathRooted(Trimmed), Trimmed, IO.Path.Combine(PathExeFolder, Trimmed))
+        If File.Exists(LocalPath) Then Return New Uri(LocalPath, UriKind.Absolute)
+
         Dim AbsoluteUri As Uri = Nothing
         If Uri.TryCreate(Trimmed, UriKind.Absolute, AbsoluteUri) Then Return AbsoluteUri
         If Trimmed.StartsWith("/", StringComparison.Ordinal) AndAlso Not String.IsNullOrWhiteSpace(CurrentBaseUrl) Then
             Return New Uri(CurrentBaseUrl.TrimEnd("/"c) & Trimmed, UriKind.Absolute)
         End If
 
-        Dim LocalPath = If(IO.Path.IsPathRooted(Trimmed), Trimmed, IO.Path.Combine(PathExeFolder, Trimmed))
-        If File.Exists(LocalPath) Then Return New Uri(LocalPath, UriKind.Absolute)
         If Not String.IsNullOrWhiteSpace(CurrentBaseUrl) Then Return New Uri(CurrentBaseUrl.TrimEnd("/"c) & "/" & Trimmed.TrimStart("/"c), UriKind.Absolute)
         Return Nothing
     End Function
@@ -373,6 +393,29 @@ Public Class PageOmniMixLeft
         ImgLeftPlaybackCover.Visibility = Visibility.Collapsed
         PathLeftPlaybackCoverPlaceholder.Visibility = Visibility.Visible
     End Sub
+
+    Public Sub DispatcherUnhandledException(sender As Object, e As System.Windows.Threading.DispatcherUnhandledExceptionEventArgs) Implements IDispatcherUnhandledException.DispatcherUnhandledException
+        If Not IsWicStreamReadFailure(e.Exception) Then Return
+        Logger.Warn(e.Exception, "播放封面异步解码失败，已回退到默认封面")
+        ClearCoverImage()
+        e.Handled = True
+    End Sub
+
+    Private Shared Function IsWicStreamReadFailure(Ex As Exception) As Boolean
+        Const WicErrStreamRead As Integer = -2003292302 ' 0x88982F72
+        Dim Current = Ex
+        While Current IsNot Nothing
+            If Current.HResult = WicErrStreamRead Then Return True
+            Dim Trace = Current.StackTrace
+            If Not String.IsNullOrEmpty(Trace) AndAlso
+               (Trace.Contains("System.Windows.Media.Imaging.BitmapImage.OnDownloadCompleted") OrElse
+                Trace.Contains("System.Windows.Media.Imaging.LateBoundBitmapDecoder.DownloadCallback")) Then
+                Return True
+            End If
+            Current = Current.InnerException
+        End While
+        Return False
+    End Function
 
     Private Shared Function PickActiveInstance(Instances As List(Of OmniMixPlaybackInstanceInfo), Optional PreferredId As String = "") As OmniMixPlaybackInstanceInfo
         If Instances Is Nothing OrElse Instances.Count = 0 Then Return Nothing

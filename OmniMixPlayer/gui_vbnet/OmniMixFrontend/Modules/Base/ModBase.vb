@@ -1308,7 +1308,10 @@ Public Module ModBase
                 Throw New Exception(Url & " 不是一个有效的网址，它必须以 http 开头！")
             End If
             Logger.Info($"正在打开网页：{Url}")
-            StartProcess(Url)
+            StartProcess(New ProcessStartInfo With {
+                .FileName = Url,
+                .UseShellExecute = True
+            })
         Catch ex As Exception
             Logger.Warn(ex, $"无法打开网页（{Url}）")
             ClipboardSet(Url, False)
